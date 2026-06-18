@@ -148,6 +148,13 @@ def load_scifact() -> Tuple[List[CorpusDoc], Dict[str, str], Dict[str, Dict[str,
         for line in handle:
             query_id, corpus_id, score_text = line.rstrip("\n").split("\t")
             qrels.setdefault(query_id, {})[corpus_id] = int(score_text)
+    # Canonical BEIR test split: run + score ONLY the queries that have test qrels
+    # (SciFact test = ~300). queries.jsonl holds the FULL set (train+test, ~1109);
+    # without this filter the run covers train+test and the artifact mislabels the
+    # count as test_queries — which reads as train-contamination to a BEIR-literate
+    # reviewer. Scoring already iterated qrels (test) only, so the metric is unchanged;
+    # this also stops embedding ~800 train queries that never contributed to the score.
+    queries = {qid: text for qid, text in queries.items() if qid in qrels}
     return corpus, queries, qrels
 
 

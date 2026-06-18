@@ -12,14 +12,14 @@
       "weaviate_bm25": true
     },
     "top_k": 10,
-    "weaviate_url": "http://localhost:8088"
+    "weaviate_url": "http://localhost:8096"
   },
   "dataset": "BEIR SciFact",
   "dataset_stats": {
     "corpus_docs": 5183,
-    "test_queries": 1109
+    "test_queries": 300
   },
-  "generated_at": "2026-06-14T17:12:34Z",
+  "generated_at": "2026-06-18T01:42:45Z",
   "metrics": {
     "dense": {
       "MRR@10": 0.6079510582010582,
@@ -27,9 +27,9 @@
       "nDCG@10": 0.6509452216935881
     },
     "hybrid": {
-      "MRR@10": 0.6884179894179894,
+      "MRR@10": 0.686473544973545,
       "Recall@10": 0.8687222222222223,
-      "nDCG@10": 0.727088690945669
+      "nDCG@10": 0.7256273786511518
     }
   },
   "reproduce": "PYTHONPATH=. python3 benchmarks/beir_eval.py"
