@@ -1,0 +1,91 @@
+{
+  "timestamp": "2026-04-06T10:46:08Z",
+  "version": "composed_v1_linear",
+  "results": [
+    {
+      "category": "bristle_arc",
+      "hit_rate": 1.0,
+      "avg_ms": 606,
+      "sample_size": 5,
+      "strategies": {
+        "exact": 5
+      }
+    },
+    {
+      "category": "conceptual",
+      "hit_rate": 1.0,
+      "avg_ms": 994,
+      "sample_size": 5,
+      "strategies": {
+        "conceptual": 4,
+        "relational": 1
+      }
+    },
+    {
+      "category": "exact",
+      "hit_rate": 1.0,
+      "avg_ms": 580,
+      "sample_size": 5,
+      "strategies": {
+        "exact": 5
+      }
+    },
+    {
+      "category": "humor",
+      "hit_rate": 1.0,
+      "avg_ms": 594,
+      "sample_size": 5,
+      "strategies": {
+        "humor": 2,
+        "exact": 3
+      }
+    },
+    {
+      "category": "infra",
+      "hit_rate": 1.0,
+      "avg_ms": 317,
+      "sample_size": 5,
+      "strategies": {
+        "exact": 5
+      }
+    },
+    {
+      "category": "memory",
+      "hit_rate": 1.0,
+      "avg_ms": 675,
+      "sample_size": 5,
+      "strategies": {
+        "humor": 1,
+        "exact": 3,
+        "memory": 1
+      }
+    },
+    {
+      "category": "motif",
+      "hit_rate": 1.0,
+      "avg_ms": 200,
+      "sample_size": 5,
+      "strategies": {
+        "motif": 5
+      }
+    },
+    {
+      "category": "relational",
+      "hit_rate": 1.0,
+      "avg_ms": 940,
+      "sample_size": 5,
+      "strategies": {
+        "relational": 5
+      }
+    },
+    {
+      "category": "temporal",
+      "hit_rate": 1.0,
+      "avg_ms": 533,
+      "sample_size": 5,
+      "strategies": {
+        "temporal": 5
+      }
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+# Qwen3-Embedding-8B Server Dependencies
+# Tested on NVIDIA DGX Spark (GB10 Blackwell)
+
+# Core
+torch>=2.0.0
+transformers>=4.40.0
+tokenizers>=0.19.0
+
+# Server
+fastapi>=0.111.0
+uvicorn>=0.30.0
+pydantic>=2.0.0
+
+# Utilities
+requests>=2.31.0
+numpy>=1.24.0
+python-dotenv>=1.0

@@ -1,0 +1,18 @@
+# ISMA retrieval system dependencies
+# Install alongside the base requirements.txt:
+#   pip install -r requirements.txt -r isma/requirements.txt
+
+# Database clients
+redis>=5.0.0
+neo4j>=5.0.0
+weaviate-client>=4.0.0
+
+# HTTP + async
+requests>=2.31.0
+aiohttp>=3.9.0
+
+# Reranker (gte backend, optional)
+# sentence-transformers>=3.0.0
+
+# MCP server (optional)
+# mcp>=0.1.0

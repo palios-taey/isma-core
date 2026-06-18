@@ -1,0 +1,36 @@
+{
+  "config": {
+    "class_name": "BEIR_SciFact",
+    "embedding_model": "Qwen/Qwen3-Embedding-8B",
+    "embedding_url": "http://localhost:8089/v1/embeddings",
+    "hybrid_alpha": 0.5,
+    "layers_active": {
+      "dense_vectors": true,
+      "isma_hmm_rerank": false,
+      "isma_phi_layers": false,
+      "isma_query_classifier": false,
+      "weaviate_bm25": true
+    },
+    "top_k": 10,
+    "weaviate_url": "http://localhost:8088"
+  },
+  "dataset": "BEIR SciFact",
+  "dataset_stats": {
+    "corpus_docs": 5183,
+    "test_queries": 1109
+  },
+  "generated_at": "2026-06-14T17:12:34Z",
+  "metrics": {
+    "dense": {
+      "MRR@10": 0.6079510582010582,
+      "Recall@10": 0.8000555555555556,
+      "nDCG@10": 0.6509452216935881
+    },
+    "hybrid": {
+      "MRR@10": 0.6884179894179894,
+      "Recall@10": 0.8687222222222223,
+      "nDCG@10": 0.727088690945669
+    }
+  },
+  "reproduce": "PYTHONPATH=. python3 benchmarks/beir_eval.py"
+}
