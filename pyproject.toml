@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "isma-core"
+version = "0.1.0"
+description = "Hybrid retrieval (RAG): dense vector + BM25, multi-scale chunking, query-type routing, optional graph/motif enrichment, FastAPI serving. Bring your own embedding model."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "PALIOS-TAEY LLC" }]
+keywords = ["rag", "retrieval", "vector-search", "bm25", "weaviate", "embeddings"]
+
+# Core retrieval/serving deps (the query path). Lightweight — no torch.
+dependencies = [
+    "fastapi>=0.111.0",
+    "uvicorn>=0.30.0",
+    "pydantic>=2.0.0",
+    "requests>=2.31.0",
+    "redis>=4.5",
+    "neo4j>=5.0",
+    "numpy>=1.24.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Only needed to run the bundled Qwen3-Embedding-8B server (server.py) or
+# isma/scripts/colbert_retrieval.py locally. Core retrieval uses an external
+# embedding endpoint (EMBEDDING_URL) and does not require these.
+server = ["torch>=2.0.0", "transformers>=4.40.0", "tokenizers>=0.19.0"]
+
+[project.urls]
+Homepage = "https://github.com/palios-taey/isma-core"
+
+[tool.setuptools.packages.find]
+include = ["isma*"]
