@@ -226,7 +226,7 @@ def get_tools() -> List[Dict]:
                     "edge_type": {"type": "string",
                                   "enum": ["RELATES_TO", "EXPRESSES", "all"],
                                   "description": "Edge type to follow (default: all)", "default": "all"},
-                    "depth": {"type": "integer", "description": "Traversal depth (default 1)", "default": 1},
+                    "depth": {"type": "integer", "description": "Traversal depth (default 1)", "default": 1, "maximum": 3},
                     "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
                 },
                 "required": ["content_hash"],
@@ -247,7 +247,8 @@ def get_tools() -> List[Dict]:
         {
             "name": "isma_cypher",
             "description": (
-                "Execute a raw read-only Neo4j Cypher query against the ISMA knowledge graph. "
+                "Execute an advisory read-only Neo4j Cypher query against the ISMA knowledge graph. "
+                "Neo4j Community READ_ACCESS is a routing hint, not an enforcement boundary. "
                 "Use for complex graph queries not covered by other tools. "
                 "Available labels: HMMTile, HMMMotif, Document, ChatSession, ISMAMessage. "
                 "Available edges: EXPRESSES, RELATES_TO, SUPERSEDES, HAS_MESSAGE."
@@ -315,12 +316,15 @@ def handle_isma_search(args: dict) -> dict:
     if args.get("enriched_only"):
         tiles = [t for t in tiles if t.hmm_enriched]
 
-    return {
+    response = {
         "query": query,
         "total_results": len(tiles),
         "search_time_ms": round(result.get("search_time_ms", 0), 1),
         "tiles": [_tile_to_dict(t) for t in tiles[:top_k]],
     }
+    if scale and not tiles:
+        response["note"] = f"0 results after scale filter: {scale}"
+    return response
 
 
 def handle_isma_motif_search(args: dict) -> dict:

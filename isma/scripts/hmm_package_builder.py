@@ -191,7 +191,8 @@ def mark_completed(content_hashes: list, pkg_id: str = ""):
         # Ownership check: only complete items still owned by this package
         for ch in content_hashes:
             owner = r.get(f"{PFX}in_progress:{ch}")
-            if owner is None or pkg_id in owner:
+            owner_pkg_id = owner.rsplit(":", 1)[-1] if owner else ""
+            if owner is None or owner_pkg_id == pkg_id:
                 verified_hashes.append(ch)
             else:
                 log.warning(f"  Ownership mismatch for {ch[:12]}: owned by {owner}, not {pkg_id} — skipping")
