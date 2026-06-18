@@ -53,6 +53,5 @@ curl -X POST localhost:8095/search -H 'Content-Type: application/json' \
 
 - `isma_cypher` is **advisory** read-only — Neo4j Community `READ_ACCESS` is a routing hint, not a
   write-block. Do not expose it to untrusted callers expecting a hard guarantee.
-- `isma_graph_traverse` silently caps `depth` at 3.
-- `isma_search` returns `total_results: 0` with no diagnostic when a scale filter yields nothing.
+- `isma_graph_traverse` caps `depth` at 3 (declared in the tool's JSON schema).
 - Hybrid BEIR recall varies ~0.3% run-to-run; dense retrieval is exactly reproducible.

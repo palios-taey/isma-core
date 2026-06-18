@@ -31,13 +31,11 @@ optional advanced surface. Nothing here blocks the core retrieval path.
   which is a routing hint, not a write-block, on single-node (non-cluster) Neo4j Community — a
   sufficiently crafted side-effectful Cypher could still mutate. Treat the tool as advisory; do not
   expose it to untrusted callers expecting a hard read-only guarantee.
-- **`isma_graph_traverse` silently caps depth at 3.** Requests for greater depth return depth-3 results
-  without a notification (the JSON schema should constrain `depth` to `maximum: 3`).
-- **`isma_search` gives no diagnostic on an empty scale-filtered result.** A query that yields zero
-  matches after scale filtering returns `total_results: 0` with no explanatory field.
-- **`hmm_package_builder` ownership check uses a substring match.** Package-ownership verification can
-  false-positive when two package IDs share a prefix and complete within the same second; an exact /
-  delimited match would remove the race.
+- **`isma_graph_traverse` depth is capped at 3.** This is now declared in the tool's JSON schema
+  (`"maximum": 3`), so clients see the constraint rather than hitting it silently.
+
+(Previously listed here and since fixed: the `isma_search` empty-scale-filter result now returns an
+explanatory `note`; `hmm_package_builder` ownership now uses an exact match, not a substring.)
 
 ## License
 
