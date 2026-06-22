@@ -28,6 +28,8 @@ from dataclasses import replace as dc_replace
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
+from isma.src.provenance_scorer import correction_obedience
+
 # Half-lives by query type (days)
 HALF_LIVES = {
     "exact": 90,
@@ -92,6 +94,24 @@ def temporal_decay_score(
     return math.pow(2, -age_days / half_life_days)
 
 
+def validity_multiplier(tile) -> float:
+    """Compute a multiplicative validity penalty for superseded tiles.
+
+    Current tiles stay near 1.0; superseded tiles are down-weighted but not
+    zeroed out so explicit history queries can still surface them when allowed.
+    """
+    superseded_by = getattr(tile, "superseded_by", "") or ""
+    invalidated_at = getattr(tile, "invalidated_at", "") or ""
+    if not superseded_by and not invalidated_at:
+        return 1.0
+
+    correction = correction_obedience(tile)
+    # Superseded/corrected tiles should still be retrievable when the caller
+    # explicitly opts into historical views, but they should rank below current
+    # tiles even if freshness is high.
+    return 0.35 + (0.65 * correction)
+
+
 def apply_temporal_decay(
     tiles: list,
     half_life_days: float = 90,
@@ -123,6 +143,7 @@ def apply_temporal_decay(
             loaded_at = _extract_date_from_path(tile.source_file or "")
 
         temporal_score = temporal_decay_score(loaded_at, half_life_days, now)
+        validity_score = validity_multiplier(tile)
         original_score = getattr(tile, "score", 0.0) or 0.0
         if isinstance(original_score, str):
             try:
@@ -130,7 +151,8 @@ def apply_temporal_decay(
             except (ValueError, TypeError):
                 original_score = 0.0
 
-        adjusted = (1 - decay_weight) * original_score + decay_weight * temporal_score
+        adjusted = ((1 - decay_weight) * original_score + decay_weight * temporal_score)
+        adjusted *= validity_score
         # Create copy with updated score (never mutate in-place — may be cached)
         try:
             tile = dc_replace(tile, score=adjusted)
