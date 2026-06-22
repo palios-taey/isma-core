@@ -90,8 +90,7 @@ TILE_PROPERTIES = [
     "content", "source_type", "source_file", "layer", "platform",
     "session_id", "document_id", "scale", "parent_tile_id",
     "tile_index", "start_char", "end_char", "token_count",
-    "content_hash", "timestamp", "loaded_at", "valid_from",
-    "invalidated_at", "actor", "model",
+    "content_hash", "timestamp", "loaded_at", "actor", "model",
     "has_artifacts", "artifact_count", "has_thinking",
     "conversation_id", "priority", "exchange_index",
     # HMM enrichment properties
@@ -154,8 +153,6 @@ class TileResult:
     hmm_gate_flags: List[str] = field(default_factory=list)
     # Temporal
     loaded_at: str = ""
-    valid_from: str = ""
-    invalidated_at: str = ""
     # Provenance fields (Phase 8B)
     truth_tier: str = ""
     authority: str = ""
@@ -555,8 +552,6 @@ def _parse_tile(obj: dict) -> TileResult:
         hmm_consensus=obj.get("hmm_consensus") or False,
         hmm_gate_flags=obj.get("hmm_gate_flags") or [],
         loaded_at=obj.get("loaded_at") or "",
-        valid_from=obj.get("valid_from") or "",
-        invalidated_at=obj.get("invalidated_at") or "",
         # Provenance fields (Phase 8B)
         truth_tier=obj.get("truth_tier") or "",
         authority=obj.get("authority") or "",

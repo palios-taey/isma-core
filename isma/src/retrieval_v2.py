@@ -434,8 +434,6 @@ class ISMARetrievalV2:
             "session_id": tile.get("session_id", ""),
             "document_id": tile.get("document_id", ""),
             "loaded_at": tile.get("loaded_at", ""),
-            "valid_from": tile.get("valid_from", ""),
-            "invalidated_at": tile.get("invalidated_at", ""),
             "rosetta_summary": tile.get("rosetta_summary", "") or "",
             "dominant_motifs": tile.get("dominant_motifs") or [],
             "hmm_enriched": tile.get("hmm_enriched", False),
