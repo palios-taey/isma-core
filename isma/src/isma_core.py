@@ -778,6 +778,19 @@ class ISMACore:
             # Build tile ID map for parent linking
             tile_ids = {}  # (scale, index) -> weaviate_uuid
 
+            # FREEZE the prior generation to supersede BEFORE writing any new tile.
+            # Discovering it AFTER the write would match the just-written new tiles
+            # (same content_hash/lineage_root/scale, is_superseded=false) and cause
+            # self-supersession — the new tile would invalidate itself and vanish —
+            # and let multi-tile siblings invalidate each other. Frozen-before-write
+            # guarantees the set holds only the OLD generation.
+            prior_superseded_ids = set()
+            for _sc in {t.scale for t in tiles}:
+                prior_superseded_ids.update(
+                    self._find_superseded_tile_ids(base_content_hash, lineage_root, _sc)
+                )
+            new_uuids = set()
+
             for tile in tiles:
                 embedding = self._get_embedding(tile.text)
                 if not embedding:
@@ -829,14 +842,8 @@ class ISMACore:
                         f"tile write failed: HTTP {response.status_code} {response.text[:160]}"
                     )
                 success_count += 1
+                new_uuids.add(tile_uuid)
                 tile_ids[(tile.scale, tile.index)] = tile_uuid
-
-                # New tile is committed — now supersede prior versions. A failure
-                # here leaves a recoverable both-visible state (re-runnable), never a
-                # disappearance; it raises (fail-loud) so it's counted, not swallowed.
-                superseded_tile_ids = self._find_superseded_tile_ids(base_content_hash, lineage_root, tile.scale)
-                if superseded_tile_ids:
-                    self._invalidate_superseded_tiles(superseded_tile_ids, tile_uuid, event.timestamp)
 
             # Link parent IDs: search_512 → context_2048
             for tile in tiles:
@@ -853,14 +860,25 @@ class ISMACore:
                         except Exception:
                             pass  # Non-critical - linking is best-effort
 
+            # All new tiles are durable — NOW supersede the frozen OLD generation
+            # (exclude any new UUID as a belt-and-suspenders guard against self-
+            # supersession). Done after the writes so a failed/partial write never
+            # hides the old with no replacement; worst case is a recoverable
+            # both-visible state (old + new), surfaced fail-loud.
+            prior_superseded_ids -= new_uuids
+            if prior_superseded_ids and success_count > 0:
+                self._invalidate_superseded_tiles(
+                    sorted(prior_superseded_ids), base_content_hash, event.timestamp
+                )
+
             return success_count > 0
 
         except RuntimeError:
-            # Supersede fail-loud signal (from _find/_invalidate_superseded_tiles):
-            # propagate it so consolidate_pending counts it as an error rather than
-            # swallowing it into a False that still marks the item 'processed'.
-            # The new tile is not written when supersede raises (raise precedes the
-            # write), so no zombie + no half-superseded state.
+            # Fail-loud signal (bad tile write, or a supersede lookup/patch failure):
+            # propagate so consolidate_pending counts it as an error rather than
+            # swallowing it into a False that still marks the item 'processed'. Prior
+            # invalidation runs only AFTER all new tiles are durable, so a failure
+            # never leaves the old hidden with no replacement.
             raise
         except Exception as e:
             print(f"Weaviate embed warning: {e}")
