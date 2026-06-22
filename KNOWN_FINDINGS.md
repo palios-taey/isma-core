@@ -22,10 +22,14 @@ optional advanced surface. Nothing here blocks the core retrieval path.
   via a boolean filter (`{is_superseded NotEqual true}` — a boolean, not an empty-string text filter,
   which Weaviate rejects on a word-tokenized field). A **fresh** store auto-creates the property on the
   first governed write. An **existing** store must have the property **present in the `ISMA_Quantum`
-  schema** before the filter serves (else queries error `"no such prop"`). A values-backfill is
-  **optional**: verified on a real store, `NotEqual true` also matches tiles that *lack* the flag, so
-  legacy un-flagged tiles stay visible (graceful) rather than being hidden — only `is_superseded=true`
-  tiles are excluded. Policy + fields: `MEMORY_GOVERNANCE.md`; evidence: `audit_logs/p4_production_evidence.md`.
+  schema** before the filter serves (else queries error `"no such prop"`), AND **a one-time
+  backfill** (`is_superseded=false` on existing tiles) is **required on a populated store** to
+  materialize the property's inverted-index bucket — otherwise the filter errors `"bucket for prop
+  is_superseded not found - is it indexed?"` (verified on the live 1.5M-tile store: adding the
+  property is not enough; the bucket only exists once values are written). A **fresh** store
+  auto-materializes on first governed write. Once the bucket exists, `NotEqual true` also matches any
+  still-unflagged tiles (graceful), so a partial backfill degrades safely — but at least
+  bucket-materialization is mandatory. Policy + fields: `MEMORY_GOVERNANCE.md`; evidence: `audit_logs/p4_production_evidence.md`.
 - History/timeline reconstruction intentionally still sees superseded tiles (the exclusion is for
   answering queries, not for auditing lineage).
 

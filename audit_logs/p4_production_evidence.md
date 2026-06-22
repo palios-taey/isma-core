@@ -47,9 +47,21 @@ So `NotEqual true` matches tiles that **lack** the flag. Consequences (Observed)
   schema before the read-side filter serves, or queries error `"no such prop"` (observed on live
   `:8088`, which predates the property). A fresh store auto-creates it on first governed write; an
   existing store needs a one-time schema-add (one governed write, or an explicit schema POST).
-- **A values-backfill is OPTIONAL** (earlier docs overstated it as required): RUN C shows un-flagged
-  legacy tiles stay visible under the default filter, so they are not hidden. Backfill only matters if
-  you want every tile to carry an explicit `false`.
+- **A values-backfill is REQUIRED on a populated store** (CORRECTED — RUN C, a small fresh store,
+  misled this): on the live 1.5M-tile store, adding the property is *not* enough — the boolean filter
+  errors `"bucket for prop is_superseded not found - is it indexed?"` because the inverted-index bucket
+  is only materialized once `is_superseded` is actually written to tiles. So an existing store needs a
+  one-time `is_superseded=false` backfill (or at minimum bucket-materialization) BEFORE the filter code
+  deploys. RUN C's "un-flagged tiles stay visible" holds only *after* the bucket exists — it then
+  matches still-unflagged tiles gracefully, so a partial backfill degrades safely.
+
+## RUN D — live-store deploy probe (the scale finding)
+- Added `is_superseded` (boolean, `indexFilterable=true`) to the live `ISMA_Quantum` schema: additive,
+  non-destructive — live `/search` still returns results (no disruption; the deployed code doesn't yet
+  reference the property).
+- `{is_superseded NotEqual true}` and `{Equal false}` BOTH error `"bucket for prop is_superseded not
+  found"` on the 1.5M store → confirms the backfill/materialization requirement above. The live filter
+  code must NOT deploy until the bucket is materialized, or fleet retrieval breaks.
 
 ## Residual (honest)
 - Full ingest→supersede end-to-end through `isma_core.ingest()`'s queue pipeline was not driven here;
