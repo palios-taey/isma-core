@@ -1156,9 +1156,15 @@ class ISMARetrievalV2:
                     "] }"
                 )
 
+            # Exclude superseded tiles from this context-escalation fetch too, so
+            # the read-side exclusion holds on EVERY answering read path (not just
+            # the primary builders). Wrap the overlap Or in an And with the filter.
             gql = (
                 f"{{ Get {{ {V1_CLASS}("
-                f"where: {{ operator: Or, operands: [{', '.join(operands)}] }}"
+                f"where: {{ operator: And, operands: ["
+                f'{{ path: ["is_superseded"], operator: NotEqual, valueBoolean: true }}, '
+                f"{{ operator: Or, operands: [{', '.join(operands)}] }}"
+                f"] }}"
                 f" limit: {max(len(batch) * 4, 4)}"
                 f") {{ {STAGE_TILE_PROPS} _additional {{ id score }} }} }} }}"
             )

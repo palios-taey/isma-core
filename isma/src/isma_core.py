@@ -817,7 +817,13 @@ class ISMACore:
                 # If the new write fails we must NOT have already hidden the old
                 # (that would be a disappearance: old hidden + no new). Fail loud on
                 # a bad write so the failure is surfaced, not silently partial.
-                response = requests.post(url, json=obj, timeout=5)
+                try:
+                    response = requests.post(url, json=obj, timeout=5)
+                except requests.RequestException as e:
+                    # Network/timeout on the new-tile write — fail loud (RuntimeError
+                    # is re-raised to consolidate_pending as an error), never swallowed
+                    # into a False that would be silently counted 'processed'.
+                    raise RuntimeError(f"tile write unreachable: {e}") from e
                 if response.status_code not in (200, 201):
                     raise RuntimeError(
                         f"tile write failed: HTTP {response.status_code} {response.text[:160]}"
