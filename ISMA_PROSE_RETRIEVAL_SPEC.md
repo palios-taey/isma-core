@@ -18,7 +18,7 @@ The newly-ingested prose carries `hmm_enriched=false`. Any HMM-gated path EXCLUD
 
 Defaults return ~10 shallow snippets. That is NOT acceptable for our work. Depth recipe:
 
-1. **High top_k:** `top_k` ≥ 25 (use 40–50 for broad topics). No server cap — it returns what you ask.
+1. **High top_k:** `top_k` ≥ 25 (use 40–50 for broad topics). The query API caps `top_k` at **100** (`Field(..., le=100)` in `query_api.py`); requests above 100 are rejected (HTTP 422), so stay at or below it.
 2. **Full passages, not snippets:** request **`scale:"full_4096"`** for complete ~2K-char passages. (search_512 is for pinpoint precision; full_4096 is for depth/context.) Do a depth pass at full_4096 AND a precision pass at search_512, then union.
 3. **Pull the whole `content` field**, never `content_preview`.
 4. **Multi-query:** run 3–6 phrasings of the topic (synonyms, the acronym + the expansion, the symptom + the mechanism) and UNION the hits — single-query retrieval under-covers.
