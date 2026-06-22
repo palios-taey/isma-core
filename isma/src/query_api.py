@@ -953,6 +953,19 @@ def ingest_session_tile(req: SessionTileRequest, _: None = Depends(require_api_k
             "rosetta_summary": rosetta,
             "truth_tier": req.truth_tier,
             "hmm_enriched": False,
+            # memory-governance fields, stamped at ingest so session tiles are
+            # eligible under the read-side validity filter and carry provenance
+            # (this is a tile-write path parallel to isma_core._embed_to_weaviate;
+            # both must stamp these or the default is_superseded filter drops them).
+            "valid_from": now_iso,
+            "superseded_by": "",
+            "invalidated_at": "",
+            "is_superseded": False,
+            "lineage_root": content_hash,
+            "provenance_hash": json.dumps(
+                {"source": req.source_file, "content_hash": content_hash, "timestamp": now_iso},
+                sort_keys=True,
+            ),
         },
         "vector": vector,
     }
