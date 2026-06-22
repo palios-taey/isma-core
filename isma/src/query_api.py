@@ -135,6 +135,7 @@ class SearchRequest(BaseModel):
     query: str
     top_k: int = Field(default=10, ge=1, le=100)
     expand_parents: bool = False
+    include_superseded: Optional[bool] = False
     platform: Optional[str] = None
     source_type: Optional[str] = None
     scale: Optional[str] = None
@@ -165,6 +166,7 @@ class HMMSearchRequest(BaseModel):
     motif_weight: float = 0.2
     query_type: str = "default"
     instruction: Optional[str] = None
+    include_superseded: Optional[bool] = False
     platform: Optional[str] = None
     source_type: Optional[str] = None
     hmm_enriched: Optional[bool] = None
@@ -180,6 +182,7 @@ class MotifSearchRequest(BaseModel):
 class BM25Request(BaseModel):
     query: str
     top_k: int = Field(default=10, ge=1, le=100)
+    include_superseded: Optional[bool] = False
     platform: Optional[str] = None
     source_type: Optional[str] = None
 
@@ -253,6 +256,7 @@ def search(req: SearchRequest):
         query=req.query,
         top_k=req.top_k,
         expand_parents=req.expand_parents,
+        include_superseded=req.include_superseded,
         **filters,
     )
     return _search_result_to_dict(result)
@@ -262,7 +266,8 @@ def search(req: SearchRequest):
 def search_hmm(req: HMMSearchRequest):
     r = get_retrieval()
     filters = {}
-    for field_name in ["platform", "source_type", "hmm_enriched"]:
+    for field_name in ["platform", "source_type", "hmm_enriched",
+                       "include_superseded"]:
         val = getattr(req, field_name)
         if val is not None:
             filters[field_name] = val
@@ -317,6 +322,8 @@ def search_motif(req: MotifSearchRequest):
 def search_bm25(req: BM25Request):
     r = get_retrieval()
     filters = {}
+    if req.include_superseded is not None:
+        filters["include_superseded"] = req.include_superseded
     if req.platform:
         filters["platform"] = req.platform
     if req.source_type:
@@ -413,9 +420,17 @@ def get_document_text(content_hash: str):
 
 
 @app.get("/tiles/{content_hash}")
-def get_tiles(content_hash: str, scale: Optional[str] = None):
+def get_tiles(
+    content_hash: str,
+    scale: Optional[str] = None,
+    include_superseded: bool = False,
+):
     r = get_retrieval()
-    tiles = r.get_tiles_for_content(content_hash, scale=scale)
+    tiles = r.get_tiles_for_content(
+        content_hash,
+        scale=scale,
+        include_superseded=include_superseded,
+    )
     return {"content_hash": content_hash, "count": len(tiles),
             "tiles": [_tile_to_dict(t) for t in tiles]}
 
@@ -458,6 +473,7 @@ class V2SearchRequest(BaseModel):
     rerank: bool = True
     query_type: str = "default"
     instruction: Optional[str] = None
+    include_superseded: Optional[bool] = False
     platform: Optional[str] = None
     source_type: Optional[str] = None
     hmm_enriched: Optional[bool] = None
@@ -479,7 +495,8 @@ def v2_search(req: V2SearchRequest):
         raise HTTPException(status_code=503, detail="V2 class not available")
 
     filters = {}
-    for field_name in ["platform", "source_type", "hmm_enriched"]:
+    for field_name in ["platform", "source_type", "hmm_enriched",
+                       "include_superseded"]:
         val = getattr(req, field_name)
         if val is not None:
             filters[field_name] = val
@@ -503,7 +520,8 @@ def v2_search_hmm(req: V2SearchRequest):
         raise HTTPException(status_code=503, detail="V2 class not available")
 
     filters = {}
-    for field_name in ["platform", "source_type", "hmm_enriched"]:
+    for field_name in ["platform", "source_type", "hmm_enriched",
+                       "include_superseded"]:
         val = getattr(req, field_name)
         if val is not None:
             filters[field_name] = val
@@ -545,7 +563,8 @@ def v2_search_adaptive(req: V2SearchRequest):
         raise HTTPException(status_code=503, detail="V2 class not available")
 
     filters = {}
-    for field_name in ["platform", "source_type", "hmm_enriched"]:
+    for field_name in ["platform", "source_type", "hmm_enriched",
+                       "include_superseded"]:
         val = getattr(req, field_name)
         if val is not None:
             filters[field_name] = val
@@ -606,7 +625,8 @@ def v2_search_retry(req: V2SearchRequest):
         raise HTTPException(status_code=503, detail="V2 class not available")
 
     filters = {}
-    for field_name in ["platform", "source_type", "hmm_enriched"]:
+    for field_name in ["platform", "source_type", "hmm_enriched",
+                       "include_superseded"]:
         val = getattr(req, field_name)
         if val is not None:
             filters[field_name] = val
@@ -933,6 +953,19 @@ def ingest_session_tile(req: SessionTileRequest, _: None = Depends(require_api_k
             "rosetta_summary": rosetta,
             "truth_tier": req.truth_tier,
             "hmm_enriched": False,
+            # memory-governance fields, stamped at ingest so session tiles are
+            # eligible under the read-side validity filter and carry provenance
+            # (this is a tile-write path parallel to isma_core._embed_to_weaviate;
+            # both must stamp these or the default is_superseded filter drops them).
+            "valid_from": now_iso,
+            "superseded_by": "",
+            "invalidated_at": "",
+            "is_superseded": False,
+            "lineage_root": content_hash,
+            "provenance_hash": json.dumps(
+                {"source": req.source_file, "content_hash": content_hash, "timestamp": now_iso},
+                sort_keys=True,
+            ),
         },
         "vector": vector,
     }

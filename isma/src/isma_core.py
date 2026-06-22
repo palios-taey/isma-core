@@ -647,6 +647,102 @@ class ISMACore:
         # Scale to sacred threshold range [0, 0.809]
         return ratio * PHI_COHERENCE_THRESHOLD
 
+    def _find_superseded_tile_ids(
+        self,
+        content_hash: str,
+        lineage_root: str,
+        scale: str,
+    ) -> List[str]:
+        """Return prior Weaviate tile ids that should be invalidated."""
+        if not content_hash and not lineage_root:
+            return []
+
+        def _operand(field: str, value: str) -> str:
+            return f'{{ path: ["{field}"], operator: Equal, valueText: "{value}" }}'
+
+        operands = []
+        if content_hash:
+            operands.append(_operand("content_hash", content_hash))
+        if lineage_root and lineage_root != content_hash:
+            operands.append(_operand("lineage_root", lineage_root))
+
+        if not operands:
+            return []
+
+        where = operands[0] if len(operands) == 1 else f"{{ operator: Or, operands: [{', '.join(operands)}] }}"
+        if scale:
+            where = (
+                f'{{ operator: And, operands: [{where}, '
+                f'{{ path: ["scale"], operator: Equal, valueText: "{scale}" }}] }}'
+            )
+
+        query = f"""
+        {{
+            Get {{
+                ISMA_Quantum(where: {where}, limit: 50) {{
+                    _additional {{ id }}
+                    is_superseded
+                }}
+            }}
+        }}
+        """
+
+        # FAIL-LOUD, FAIL-CLOSED: raise on any lookup failure. A silent skip here
+        # would let the new version commit while the prior version stays visible
+        # (a zombie). This runs BEFORE the new-tile write, so raising aborts the
+        # write cleanly — no half-superseded state. Genuine "no prior tiles" still
+        # returns [].
+        wv = f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/graphql"
+        try:
+            response = requests.post(wv, json={"query": query}, timeout=10)
+        except requests.RequestException as e:
+            raise RuntimeError(f"supersede lookup unreachable ({wv}): {e}") from e
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"supersede lookup HTTP {response.status_code}: {response.text[:200]}"
+            )
+        data = response.json()
+        if data.get("errors"):
+            raise RuntimeError(f"supersede lookup GraphQL errors: {data['errors']}")
+        return [
+            obj["_additional"]["id"]
+            for obj in data.get("data", {}).get("Get", {}).get("ISMA_Quantum", [])
+            if obj.get("_additional", {}).get("id") and not obj.get("is_superseded")
+        ]
+
+    def _invalidate_superseded_tiles(
+        self,
+        tile_ids: List[str],
+        superseded_by: str,
+        invalidated_at: str,
+    ) -> None:
+        """Mark earlier tiles as invalidated before writing a newer version."""
+        if not tile_ids:
+            return
+
+        # FAIL-LOUD, FAIL-CLOSED: raise if any patch fails — a silent skip leaves a
+        # zombie. Runs before the new-tile write, so the caller aborts cleanly.
+        url = f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/objects/ISMA_Quantum"
+        for tile_id in tile_ids:
+            try:
+                resp = requests.patch(
+                    f"{url}/{tile_id}",
+                    json={
+                        "properties": {
+                            "superseded_by": superseded_by,
+                            "invalidated_at": invalidated_at,
+                            "is_superseded": True,
+                        }
+                    },
+                    timeout=5,
+                )
+            except requests.RequestException as e:
+                raise RuntimeError(f"supersede patch unreachable for {tile_id[:12]}: {e}") from e
+            if resp.status_code not in (200, 204):
+                raise RuntimeError(
+                    f"supersede patch failed for {tile_id[:12]}: HTTP {resp.status_code} {resp.text[:160]}"
+                )
+
     def _embed_to_weaviate(self, event: Event) -> bool:
         """Embed event content to Weaviate using multi-scale tiling.
 
@@ -655,6 +751,17 @@ class ISMACore:
         """
         try:
             content = json.dumps(event.data) if isinstance(event.data, dict) else str(event.data)
+            payload = event.data if isinstance(event.data, dict) else {}
+            base_content_hash = str(payload.get("content_hash") or hashlib.sha256(content.encode("utf-8")).hexdigest()[:16])
+            lineage_root = str(payload.get("lineage_root") or base_content_hash)
+            provenance_hash = json.dumps(
+                {
+                    "source": payload.get("source") or event.event_type,
+                    "content_hash": base_content_hash,
+                    "timestamp": event.timestamp,
+                },
+                sort_keys=True,
+            )
 
             # Multi-scale tiling (512/2048/4096)
             tiles = multi_scale_tile(content, source_file=event.hash, layer=event.event_type)
@@ -675,12 +782,17 @@ class ISMACore:
 
                 import uuid
                 tile_uuid = str(uuid.uuid4())
+                superseded_tile_ids = self._find_superseded_tile_ids(base_content_hash, lineage_root, tile.scale)
+                if superseded_tile_ids:
+                    self._invalidate_superseded_tiles(superseded_tile_ids, tile_uuid, event.timestamp)
 
                 obj = {
                     "class": "ISMA_Quantum",
                     "id": tile_uuid,
                     "properties": {
                         "content": tile.text,
+                        "content_hash": base_content_hash,
+                        "lineage_root": lineage_root,
                         "source_type": event.event_type,
                         "layer": self._determine_layer(event.event_type),
                         "event_hash": event.hash,
@@ -688,6 +800,11 @@ class ISMACore:
                         "actor": event.agent_id,
                         "timestamp": event.timestamp,
                         "branch": event.branch,
+                        "valid_from": event.timestamp,
+                        "superseded_by": "",
+                        "invalidated_at": "",
+                        "is_superseded": False,
+                        "provenance_hash": provenance_hash,
                         "tile_index": tile.index,
                         "tile_count": len(tiles),
                         "scale": tile.scale,

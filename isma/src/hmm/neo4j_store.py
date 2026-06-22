@@ -109,11 +109,14 @@ class HMMNeo4jStore:
         estimated_tokens: int,
         layer: str = "",
         scale: str = "",
+        lineage_root: str = "",
+        provenance_hash: str = "",
     ):
         """Upsert a Tile node and link to its Artifact."""
         query = """
         MERGE (t:HMMTile {tile_id: $tile_id})
-        ON CREATE SET t.created_at = datetime()
+        ON CREATE SET t.created_at = datetime(),
+                      t.valid_from = datetime()
         SET t.artifact_id = $artifact_id,
             t.index = $index,
             t.start_char = $start_char,
@@ -121,6 +124,11 @@ class HMMNeo4jStore:
             t.estimated_tokens = $estimated_tokens,
             t.layer = $layer,
             t.scale = $scale,
+            t.lineage_root = CASE WHEN $lineage_root = "" THEN coalesce(t.lineage_root, "") ELSE $lineage_root END,
+            t.provenance_hash = CASE WHEN $provenance_hash = "" THEN coalesce(t.provenance_hash, "") ELSE $provenance_hash END,
+            t.superseded_by = coalesce(t.superseded_by, ""),
+            t.invalidated_at = coalesce(t.invalidated_at, ""),
+            t.valid_from = coalesce(t.valid_from, datetime()),
             t.updated_at = datetime()
 
         WITH t
@@ -138,6 +146,8 @@ class HMMNeo4jStore:
                 estimated_tokens=estimated_tokens,
                 layer=layer,
                 scale=scale,
+                lineage_root=lineage_root,
+                provenance_hash=provenance_hash,
             )
 
     # --- Motif operations ---
@@ -407,13 +417,17 @@ class HMMNeo4jStore:
                 platform: t.platform,
                 created_at: t.created_at,
                 updated_at: $now,
-                is_snapshot: true
+                is_snapshot: true,
+                valid_from: t.enriched_at,
+                superseded_by: $new_tile_id,
+                invalidated_at: $now
             })
             CREATE (t)-[r:SUPERSEDES {
                 valid_from: t.enriched_at,
                 superseded_at: $now,
                 evidence: $evidence
             }]->(snap)
+            SET t.valid_from = coalesce(t.valid_from, t.enriched_at)
             RETURN snap.tile_id AS snapshot_id
             """
             with self.driver.session() as session:
@@ -421,6 +435,7 @@ class HMMNeo4jStore:
                     query,
                     old_tile_id=old_tile_id,
                     snapshot_id=snapshot_id,
+                    new_tile_id=new_tile_id,
                     old_rosetta=old_rosetta or "",
                     old_motifs=old_motifs or [],
                     now=now,
@@ -438,7 +453,11 @@ class HMMNeo4jStore:
             MERGE (new)-[r:SUPERSEDES]->(old)
             SET r.valid_from = new.enriched_at,
                 r.superseded_at = $now,
-                r.evidence = $evidence
+                r.evidence = $evidence,
+                old.valid_from = coalesce(old.valid_from, old.enriched_at, $now),
+                old.superseded_by = $new_tile_id,
+                old.invalidated_at = $now,
+                new.valid_from = coalesce(new.valid_from, new.enriched_at, $now)
             """
             with self.driver.session() as session:
                 session.run(

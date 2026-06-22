@@ -32,3 +32,4 @@ benchmarks/*_results*.json
 *_verdicts.jsonl
 sidebyside*.md
 calibration_*.md
+.claude/

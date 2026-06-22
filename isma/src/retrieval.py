@@ -406,6 +406,7 @@ def _build_where_filter(
     source_file: str = None,
     scale: str = None,
     scale_exclude: str = None,
+    include_superseded: bool = False,
     session_id: str = None,
     document_id: str = None,
     content_hash: str = None,
@@ -442,6 +443,13 @@ def _build_where_filter(
     if scale_exclude and not scale:
         conditions.append(
             f'{{ path: ["scale"], operator: NotEqual, valueText: "{_escape_graphql(scale_exclude)}" }}')
+    if not include_superseded:
+        # Exclude tiles explicitly flagged superseded. Boolean filter — NOT an
+        # empty-string text filter: superseded_by is word-tokenized, so
+        # `valueText: ""` is rejected by Weaviate ("only stopwords provided").
+        # NotEqual true degrades gracefully (a tile lacking the flag stays visible).
+        conditions.append(
+            '{ path: ["is_superseded"], operator: NotEqual, valueBoolean: true }')
     if session_id:
         conditions.append(
             f'{{ path: ["session_id"], operator: Equal, valueText: "{_escape_graphql(session_id)}" }}')
@@ -647,6 +655,7 @@ class ISMARetrieval:
     def search(self, query: str, top_k: int = 10,
                expand_parents: bool = False,
                alpha: float = 0.65,
+               include_superseded: bool = False,
                # Filters
                platform: str = None,
                source_type: str = None,
@@ -733,6 +742,7 @@ class ISMARetrieval:
         where = _build_where_filter(
             platform=platform, source_type=source_type, scale=scale,
             scale_exclude=scale_exclude,
+            include_superseded=include_superseded,
             session_id=session_id, document_id=document_id,
             source_file=source_file, content_hash=content_hash,
             has_artifacts=has_artifacts, has_thinking=has_thinking,
@@ -792,6 +802,8 @@ class ISMARetrieval:
     def search_by_vector(self, vector: List[float], top_k: int = 10,
                          **filters) -> SearchResult:
         """Search by raw embedding vector (no query text needed)."""
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": False}
         where = _build_where_filter(**filters)
 
         props = " ".join(TILE_PROPERTIES)
@@ -838,6 +850,8 @@ class ISMARetrieval:
                 searches all text properties. Supports boost syntax like
                 "rosetta_summary^2" for weighted fields.
         """
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": False}
         where = _build_where_filter(**filters)
         props = " ".join(TILE_PROPERTIES)
         safe_q = _escape_graphql(query)
@@ -935,9 +949,14 @@ class ISMARetrieval:
         return None
 
     def get_tiles_for_content(self, content_hash: str,
-                              scale: str = None) -> List[TileResult]:
+                              scale: str = None,
+                              include_superseded: bool = False) -> List[TileResult]:
         """Get all tiles for a content hash (document or exchange)."""
-        where = _build_where_filter(content_hash=content_hash, scale=scale)
+        where = _build_where_filter(
+            content_hash=content_hash,
+            scale=scale,
+            include_superseded=include_superseded,
+        )
         props = " ".join(TILE_PROPERTIES)
 
         gql = f"""{{
@@ -1603,6 +1622,7 @@ class ISMARetrieval:
                             query_motifs: Optional[List[str]] = None,
                             query_type: str = "default",
                             instruction: str = "",
+                            include_superseded: bool = False,
                             **filters) -> Dict[str, Any]:
         """Full hybrid retrieval with HMM enrichment.
 
@@ -1649,6 +1669,8 @@ class ISMARetrieval:
         # reranker scoring. Only exclude when no explicit scale filter is set.
         if "scale" not in filters and "scale_exclude" not in filters:
             filters = {**filters, "scale_exclude": "rosetta"}
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": include_superseded}
 
         # Step 1: Candidate generation
         fetch_k = top_k * 3 if hmm_rerank_enabled else top_k
@@ -2061,12 +2083,15 @@ class ISMARetrieval:
     def hybrid_retrieve(self, query: str, top_k: int = 10,
                         expand_to_session: bool = False,
                         expand_to_document: bool = False,
+                        include_superseded: bool = False,
                         **filters) -> Dict[str, Any]:
         """Full hybrid retrieval: vector search + graph expansion.
 
         Returns tiles from vector search, plus optionally expands
         to full sessions or documents via Neo4j.
         """
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": include_superseded}
         search_result = self.search(query, top_k=top_k,
                                     expand_parents=True, **filters)
 
