@@ -91,7 +91,7 @@ The policy is enforced on the existing record schema and code paths — no new s
 
 | Concern | Where |
 |---|---|
-| Validity + provenance fields | `is_superseded` (bool), `valid_from`, `superseded_by`, `invalidated_at`, `lineage_root`, `correction_status`, `provenance_hash` on the tile/memory record. **Both** tile-write paths (`isma_core._embed_to_weaviate` and the `/ingest/session` API) stamp these. |
+| Validity + provenance fields | **Both** tile-write paths (`isma_core._embed_to_weaviate` and the `/ingest/session` API) stamp: `is_superseded` (bool), `valid_from`, `superseded_by`, `invalidated_at`, `lineage_root`, `provenance_hash`. (`correction_status` / `promotion_state` are separate retrieval/enrichment fields read by the provenance scorer — they are **not** stamped by these write paths.) |
 | Supersede-on-write | the ingest path marks prior matching versions `is_superseded=true` + stamps `provenance_hash` before committing the new item; the supersede step is **fail-loud / fail-closed** (a lookup/patch error aborts the write rather than silently leaving a zombie) |
 | Eligibility filter (read) | the query filter excludes tiles where `is_superseded == true` by default (`{is_superseded NotEqual true}`, in both V1 `_build_where_filter` and V2 `_build_filter`); `include_superseded=true` opts out. Existing stores need the `is_superseded` property **present in the schema** before the filter serves (else queries error); a values-backfill is optional — `NotEqual true` matches un-flagged tiles, so legacy tiles stay visible (verified, `audit_logs/p4_production_evidence.md`). |
 | History / reconstruction | the temporal-chain and session-reconstruction paths **bypass** the eligibility filter to traverse superseded items |
