@@ -33,6 +33,30 @@ optional advanced surface. Nothing here blocks the core retrieval path.
 - History/timeline reconstruction intentionally still sees superseded tiles (the exclusion is for
   answering queries, not for auditing lineage).
 
+### Scope of supersede-on-write (what it does and does NOT cover)
+
+Read-side exclusion of `is_superseded=true` tiles is applied on **all** read paths (the V1 and V2
+query-builders and the `ISMACore._semantic_search`/`recall` hybrid/BM25/vector path). Supersede-*on-write*,
+however, is **scoped** — adopters should know its boundaries (an independent audit flagged these):
+
+- **Trigger is hash/lineage match, not arbitrary content change.** `_embed_to_weaviate` finds priors by
+  matching `content_hash` or an explicit `lineage_root`. A *changed* document only auto-supersedes its
+  prior version if the caller supplies the prior `lineage_root`; otherwise the new content gets a new
+  hash and coexists with the old. Re-ingesting *identical* content supersedes correctly.
+- **Only the primary ingest path supersedes.** `ISMACore._embed_to_weaviate` does the find+invalidate.
+  Other writers stamp `is_superseded=false` but do **not** supersede priors: the `/ingest/session` API,
+  and they are un-stamped entirely in `scripts/hmm_store_results.py` and `scripts/ingest_md_file.py`
+  (their tiles are still *retrievable* — `NotEqual true` matches unflagged tiles — but not governed).
+- **Prior-tile invalidation is capped at 50 per write** (no pagination); a lineage with >50 prior
+  versions may retain some unflagged.
+- **V2 canonical class (`ISMA_Quantum_v2`) is not propagated to** by the supersede writer, which patches
+  `ISMA_Quantum`; ensure the property exists in both classes you query.
+- `scripts/backfill_md_corpus.py --purge-on-change` hard-deletes stale `watch_md_v1` tiles (that path is
+  delete-not-supersede by design).
+
+These are honest scope boundaries, not regressions; the governed core (read-side exclusion everywhere +
+supersede-on-write for the primary path) is correct and verified.
+
 ## Configuration behavior
 
 - **Neo4j is optional** — only the graph-enrichment features use it; core search imports and runs

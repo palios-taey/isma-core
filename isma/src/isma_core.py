@@ -395,6 +395,7 @@ class ISMACore:
                                     alpha: 0.65
                                     vector: %s
                                 }
+                                where: { path: ["is_superseded"], operator: NotEqual, valueBoolean: true }
                                 limit: %d
                             ) {
                                 content
@@ -419,6 +420,7 @@ class ISMACore:
                         Get {
                             ISMA_Quantum(
                                 bm25: { query: "%s" }
+                                where: { path: ["is_superseded"], operator: NotEqual, valueBoolean: true }
                                 limit: %d
                             ) {
                                 content
@@ -461,6 +463,7 @@ class ISMACore:
                     Get {
                         ISMA_Quantum(
                             nearVector: { vector: %s certainty: 0.7 }
+                            where: { path: ["is_superseded"], operator: NotEqual, valueBoolean: true }
                             limit: %d
                         ) {
                             content source_file source_type layer
@@ -782,9 +785,6 @@ class ISMACore:
 
                 import uuid
                 tile_uuid = str(uuid.uuid4())
-                superseded_tile_ids = self._find_superseded_tile_ids(base_content_hash, lineage_root, tile.scale)
-                if superseded_tile_ids:
-                    self._invalidate_superseded_tiles(superseded_tile_ids, tile_uuid, event.timestamp)
 
                 obj = {
                     "class": "ISMA_Quantum",
@@ -813,10 +813,24 @@ class ISMACore:
                     "vector": embedding
                 }
 
+                # ORDER MATTERS: write the NEW tile FIRST, then supersede the old.
+                # If the new write fails we must NOT have already hidden the old
+                # (that would be a disappearance: old hidden + no new). Fail loud on
+                # a bad write so the failure is surfaced, not silently partial.
                 response = requests.post(url, json=obj, timeout=5)
-                if response.status_code in [200, 201]:
-                    success_count += 1
-                    tile_ids[(tile.scale, tile.index)] = tile_uuid
+                if response.status_code not in (200, 201):
+                    raise RuntimeError(
+                        f"tile write failed: HTTP {response.status_code} {response.text[:160]}"
+                    )
+                success_count += 1
+                tile_ids[(tile.scale, tile.index)] = tile_uuid
+
+                # New tile is committed — now supersede prior versions. A failure
+                # here leaves a recoverable both-visible state (re-runnable), never a
+                # disappearance; it raises (fail-loud) so it's counted, not swallowed.
+                superseded_tile_ids = self._find_superseded_tile_ids(base_content_hash, lineage_root, tile.scale)
+                if superseded_tile_ids:
+                    self._invalidate_superseded_tiles(superseded_tile_ids, tile_uuid, event.timestamp)
 
             # Link parent IDs: search_512 → context_2048
             for tile in tiles:
@@ -835,6 +849,13 @@ class ISMACore:
 
             return success_count > 0
 
+        except RuntimeError:
+            # Supersede fail-loud signal (from _find/_invalidate_superseded_tiles):
+            # propagate it so consolidate_pending counts it as an error rather than
+            # swallowing it into a False that still marks the item 'processed'.
+            # The new tile is not written when supersede raises (raise precedes the
+            # write), so no zombie + no half-superseded state.
+            raise
         except Exception as e:
             print(f"Weaviate embed warning: {e}")
             return False
