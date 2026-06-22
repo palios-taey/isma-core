@@ -15,6 +15,18 @@ optional advanced surface. Nothing here blocks the core retrieval path.
   with the optional enrichment layers (rerank / phi-tiling / query classifier) **off** — no
   corpus-specific tuning. Reproduce with `BEIR_DATASET=scifact python3 benchmarks/beir_eval.py`.
 
+## Memory governance (validity / supersede)
+
+- **Supersede-exclusion needs the `is_superseded` boolean property + a backfill on an existing store.**
+  Re-ingesting a newer version flags prior tiles `is_superseded=true`; retrieval default-excludes them
+  via a boolean filter (`{is_superseded NotEqual true}` — a boolean, not an empty-string text filter,
+  which Weaviate rejects on a word-tokenized field). A **fresh** store auto-creates the property on the
+  first write. An **existing** store must (1) have the property added to the `ISMA_Quantum` schema and
+  (2) get a one-time `is_superseded=false` backfill on current tiles — otherwise the default filter
+  errors on the missing prop or hides un-flagged tiles. Policy + fields: `MEMORY_GOVERNANCE.md`.
+- History/timeline reconstruction intentionally still sees superseded tiles (the exclusion is for
+  answering queries, not for auditing lineage).
+
 ## Configuration behavior
 
 - **Neo4j is optional** — only the graph-enrichment features use it; core search imports and runs
