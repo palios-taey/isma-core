@@ -36,7 +36,10 @@ Scope is recorded on the item, not inferred at read time.
 ### 3. Decay — validity and supersession (the zombie-memory fix)
 Every durable item carries **time-bounded validity**:
 - `valid_from` — when the item became true.
-- `superseded_by` — set when a newer version replaces it (empty = currently valid).
+- `is_superseded` — **boolean** eligibility flag; `true` once a newer version replaces it. This is
+  what retrieval filters on (a boolean filters reliably; an empty-string text filter on the
+  word-tokenized `superseded_by` is rejected by the vector store as "only stopwords").
+- `superseded_by` — the id of the replacing version (audit pointer; empty when current).
 - `invalidated_at` — when it stopped being valid.
 
 **Supersede-on-write:** writing a newer version of an item marks the prior version superseded
@@ -88,9 +91,9 @@ The policy is enforced on the existing record schema and code paths — no new s
 
 | Concern | Where |
 |---|---|
-| Validity + provenance fields | `valid_from`, `superseded_by`, `invalidated_at`, `lineage_root`, `correction_status`, `provenance_hash` on the tile/memory record |
-| Supersede-on-write | the single ingest entrypoint marks prior matching versions superseded + stamps `provenance_hash` before committing the new item |
-| Eligibility filter (read) | the query filter excludes `superseded_by != ""` by default, so superseded items are never retrieved |
+| Validity + provenance fields | `is_superseded` (bool), `valid_from`, `superseded_by`, `invalidated_at`, `lineage_root`, `correction_status`, `provenance_hash` on the tile/memory record. **Both** tile-write paths (`isma_core._embed_to_weaviate` and the `/ingest/session` API) stamp these. |
+| Supersede-on-write | the ingest path marks prior matching versions `is_superseded=true` + stamps `provenance_hash` before committing the new item; the supersede step is **fail-loud / fail-closed** (a lookup/patch error aborts the write rather than silently leaving a zombie) |
+| Eligibility filter (read) | the query filter excludes tiles where `is_superseded == true` by default (`{is_superseded NotEqual true}`, in both V1 `_build_where_filter` and V2 `_build_filter`); `include_superseded=true` opts out. Existing stores need a one-time `is_superseded=false` backfill (a fresh store auto-stamps on first write). |
 | History / reconstruction | the temporal-chain and session-reconstruction paths **bypass** the eligibility filter to traverse superseded items |
 | Provenance scoring | retrieval scoring already reads `superseded_by` / `correction_status`; governance promotes this from a down-weight to an eligibility gate |
 

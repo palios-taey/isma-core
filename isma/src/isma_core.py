@@ -681,31 +681,34 @@ class ISMACore:
             Get {{
                 ISMA_Quantum(where: {where}, limit: 50) {{
                     _additional {{ id }}
-                    superseded_by
+                    is_superseded
                 }}
             }}
         }}
         """
 
+        # FAIL-LOUD, FAIL-CLOSED: raise on any lookup failure. A silent skip here
+        # would let the new version commit while the prior version stays visible
+        # (a zombie). This runs BEFORE the new-tile write, so raising aborts the
+        # write cleanly — no half-superseded state. Genuine "no prior tiles" still
+        # returns [].
+        wv = f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/graphql"
         try:
-            response = requests.post(
-                f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/graphql",
-                json={"query": query},
-                timeout=10,
+            response = requests.post(wv, json={"query": query}, timeout=10)
+        except requests.RequestException as e:
+            raise RuntimeError(f"supersede lookup unreachable ({wv}): {e}") from e
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"supersede lookup HTTP {response.status_code}: {response.text[:200]}"
             )
-            if response.status_code != 200:
-                return []
-            data = response.json()
-            if data.get("errors"):
-                return []
-            return [
-                obj["_additional"]["id"]
-                for obj in data.get("data", {}).get("Get", {}).get("ISMA_Quantum", [])
-                if obj.get("_additional", {}).get("id") and not obj.get("superseded_by")
-            ]
-        except Exception as e:
-            print(f"Weaviate supersede lookup warning: {e}")
-            return []
+        data = response.json()
+        if data.get("errors"):
+            raise RuntimeError(f"supersede lookup GraphQL errors: {data['errors']}")
+        return [
+            obj["_additional"]["id"]
+            for obj in data.get("data", {}).get("Get", {}).get("ISMA_Quantum", [])
+            if obj.get("_additional", {}).get("id") and not obj.get("is_superseded")
+        ]
 
     def _invalidate_superseded_tiles(
         self,
@@ -717,10 +720,12 @@ class ISMACore:
         if not tile_ids:
             return
 
+        # FAIL-LOUD, FAIL-CLOSED: raise if any patch fails — a silent skip leaves a
+        # zombie. Runs before the new-tile write, so the caller aborts cleanly.
         url = f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/objects/ISMA_Quantum"
         for tile_id in tile_ids:
             try:
-                requests.patch(
+                resp = requests.patch(
                     f"{url}/{tile_id}",
                     json={
                         "properties": {
@@ -731,8 +736,12 @@ class ISMACore:
                     },
                     timeout=5,
                 )
-            except Exception as e:
-                print(f"Weaviate supersede patch warning for {tile_id[:12]}: {e}")
+            except requests.RequestException as e:
+                raise RuntimeError(f"supersede patch unreachable for {tile_id[:12]}: {e}") from e
+            if resp.status_code not in (200, 204):
+                raise RuntimeError(
+                    f"supersede patch failed for {tile_id[:12]}: HTTP {resp.status_code} {resp.text[:160]}"
+                )
 
     def _embed_to_weaviate(self, event: Event) -> bool:
         """Embed event content to Weaviate using multi-scale tiling.
