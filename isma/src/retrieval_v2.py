@@ -259,6 +259,8 @@ class ISMARetrievalV2:
         embedding = _get_embedding(query)
         if not embedding:
             return []
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": False}
 
         filter_clause = self._build_filter(**filters)
         vector_str = str(embedding)
@@ -290,6 +292,8 @@ class ISMARetrievalV2:
         embedding = vector or _get_embedding(query)
         if not embedding:
             return []
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": False}
 
         filter_clause = self._build_filter(**filters)
         vector_str = str(embedding)
@@ -325,6 +329,8 @@ class ISMARetrievalV2:
         """
         # Escape query for GraphQL (backslash first, then quote, then newlines)
         safe_query = query.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ').replace('\r', ' ')
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": False}
         filter_clause = self._build_filter(**filters)
 
         q = (
@@ -350,6 +356,7 @@ class ISMARetrievalV2:
         self,
         query: str,
         top_k: int = 30,
+        include_superseded: bool = False,
     ) -> List[Tuple[dict, float]]:
         """BM25 search on ISMA_Quantum search_512 tiles (full tile text, no truncation).
 
@@ -362,11 +369,14 @@ class ISMARetrievalV2:
             .replace("\n", " ")
             .replace("\r", " ")
         )
-        scale_filter = '{ path: ["scale"], operator: Equal, valueText: "search_512" }'
+        scale_filter = _build_where_filter(
+            scale="search_512",
+            include_superseded=include_superseded,
+        )
         q = (
             f'{{ Get {{ {V1_CLASS}('
             f'bm25: {{ query: "{safe_query}" properties: ["content^2", "rosetta_summary"] }}'
-            f', where: {scale_filter}'
+            f'{", " + scale_filter if scale_filter else ""}'
             f' limit: {top_k}'
             f') {{ {V1_TILE_PROPS} _additional {{ score }} }} }} }}'
         )
@@ -382,6 +392,7 @@ class ISMARetrievalV2:
         query: str,
         top_k: int = 30,
         vector: Optional[list] = None,
+        include_superseded: bool = False,
     ) -> List[Tuple[dict, float]]:
         """NearVector search on ISMA_Quantum search_512 tiles.
 
@@ -393,11 +404,14 @@ class ISMARetrievalV2:
         if not embedding:
             return []
         vector_str = str(embedding)
-        scale_filter = '{ path: ["scale"], operator: Equal, valueText: "search_512" }'
+        scale_filter = _build_where_filter(
+            scale="search_512",
+            include_superseded=include_superseded,
+        )
         q = (
             f'{{ Get {{ {V1_CLASS}('
             f'nearVector: {{ vector: {vector_str} }}'
-            f', where: {scale_filter}'
+            f'{", " + scale_filter if scale_filter else ""}'
             f' limit: {top_k}'
             f') {{ {V1_TILE_PROPS} _additional {{ score distance }} }} }} }}'
         )
@@ -455,6 +469,9 @@ class ISMARetrievalV2:
 
         t0 = time.monotonic()
         fetch_k = max(top_k * 3, 30)
+        include_superseded = bool(filters.get("include_superseded", False))
+        if "include_superseded" not in filters:
+            filters = {**filters, "include_superseded": include_superseded}
 
         # Embed query ONCE — shared by rosetta nearVector + V1 nearVector paths.
         # BM25 path needs no embedding. Embedding twice in parallel wastes server capacity
@@ -468,10 +485,17 @@ class ISMARetrievalV2:
                 self.search_rosetta, query, top_k=fetch_k, vector=query_vector, **filters
             )
             futures_map["v1_bm25"] = executor.submit(
-                self.search_v1_bm25, query, top_k=fetch_k
+                self.search_v1_bm25,
+                query,
+                top_k=fetch_k,
+                include_superseded=include_superseded,
             )
             futures_map["v1_vector"] = executor.submit(
-                self.search_v1_vector, query, top_k=fetch_k, vector=query_vector
+                self.search_v1_vector,
+                query,
+                top_k=fetch_k,
+                vector=query_vector,
+                include_superseded=include_superseded,
             )
             results_by_path = {}
             for name, fut in futures_map.items():
@@ -2365,6 +2389,11 @@ class ISMARetrievalV2:
                 conditions.append(
                     f'{{ path: ["timestamp"], operator: LessThan, valueText: "{safe_val}" }}'
                 )
+            elif key == "include_superseded":
+                if not bool(value):
+                    conditions.append(
+                        '{ path: ["superseded_by"], operator: Equal, valueText: "" }'
+                    )
             else:
                 raise ValueError(f"unsupported filter key: {key}")
 
