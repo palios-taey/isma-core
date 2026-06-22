@@ -697,3 +697,18 @@ A safe repair requires a common validity-filter helper for every answering read,
 
 [1]: https://github.com/palios-taey/isma-core/tree/feature/memory-governance?utm_source=chatgpt.com "GitHub - palios-taey/isma-core at feature/memory-governance · GitHub"
 [2]: https://github.com/palios-taey/isma-core/tree/feature/memory-governance/audit_logs "https://github.com/palios-taey/isma-core/tree/feature/memory-governance/audit_logs"
+
+---
+
+## RE-AUDIT ROUND 2 (fixed HEAD, 2026-06-22) — ChatGPT NO-GO ADJUDICATED + FIXED
+
+The 3 fetch-capable lanes re-audited the fixed engine (main tip incl. `615c55a`):
+- **Perplexity DR: CONDITIONAL GO** — independently confirmed CLOSED: read-side `is_superseded NotEqual true` on all primary read paths (hybrid+bm25+nearVector), fail-loud `_embed_to_weaviate` re-raise, write-new-first ordering, KNOWN_FINDINGS scope honesty. Flagged one residual (`_fetch_overlap_tiles` unfiltered) + a non-RuntimeError swallow nuance.
+- **ChatGPT (web_search): NO-GO → ADJUDICATED RIGHT.** Verified (weaver) to have fetched the correct latest commit (cited `retrieval_v2.py:1159-1170` overlap filter + `isma_core.py:820-830` network-fail-loud as PRESENT), so its STILL-OPEN was NOT stale — it was genuine ADDITIONAL findings: (1) a tail of SECONDARY read paths still unfiltered (parent-expansion by-id, V2 `_fill_content` backfill, relational State Beta/Gamma, MCP `isma_get_tile`); (2) broad non-RuntimeError swallow / no queue dead-letter; (3) a NEW defect introduced by the write-new-first reorder — **SELF-SUPERSESSION** (the new tile matched its own find-superseded query and invalidated itself).
+- **Grok Heavy:** select flaked twice on this round (AT-SPI menu staleness, not a code regression); not load-bearing.
+
+**Resolution (weaver):** the lanes did NOT truly conflict — Perplexity CONDITIONAL-GO'd the narrower primary-path scope; ChatGPT's exhaustive pass found the tail + the reorder bug. **ChatGPT was correct.**
+- **FIXED:** self-supersession → `60caea4` (freeze prior IDs before writes, invalidate after, exclude new UUIDs); `_fetch_overlap_tiles` + network-fail-loud → `615c55a`; doc honesty → scope corrected to primary-path, removed "all paths"/"verified" overclaim.
+- **DEFERRED (documented follow-up, NOT shipped as done):** the secondary-path read tail + queue dead-letter robustness.
+
+**Supervisor note (taeys-hands):** lanes relayed raw, not adjudicated here; weaver verified each REFUTED vs the fetched ref and fixed the genuine ones before merge. cg-extract fix held on the ChatGPT lane (clean 15K extract, no chrome) — also production-proof of engine `9c271f08`.
