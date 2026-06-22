@@ -2391,8 +2391,9 @@ class ISMARetrievalV2:
                 )
             elif key == "include_superseded":
                 if not bool(value):
+                    # Boolean flag, NOT empty-string text (word-tokenized → rejected).
                     conditions.append(
-                        '{ path: ["superseded_by"], operator: Equal, valueText: "" }'
+                        '{ path: ["is_superseded"], operator: NotEqual, valueBoolean: true }'
                     )
             else:
                 raise ValueError(f"unsupported filter key: {key}")

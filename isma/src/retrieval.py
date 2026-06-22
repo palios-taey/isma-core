@@ -444,8 +444,12 @@ def _build_where_filter(
         conditions.append(
             f'{{ path: ["scale"], operator: NotEqual, valueText: "{_escape_graphql(scale_exclude)}" }}')
     if not include_superseded:
+        # Exclude tiles explicitly flagged superseded. Boolean filter — NOT an
+        # empty-string text filter: superseded_by is word-tokenized, so
+        # `valueText: ""` is rejected by Weaviate ("only stopwords provided").
+        # NotEqual true degrades gracefully (a tile lacking the flag stays visible).
         conditions.append(
-            '{ path: ["superseded_by"], operator: Equal, valueText: "" }')
+            '{ path: ["is_superseded"], operator: NotEqual, valueBoolean: true }')
     if session_id:
         conditions.append(
             f'{{ path: ["session_id"], operator: Equal, valueText: "{_escape_graphql(session_id)}" }}')

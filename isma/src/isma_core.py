@@ -726,6 +726,7 @@ class ISMACore:
                         "properties": {
                             "superseded_by": superseded_by,
                             "invalidated_at": invalidated_at,
+                            "is_superseded": True,
                         }
                     },
                     timeout=5,
@@ -793,6 +794,7 @@ class ISMACore:
                         "valid_from": event.timestamp,
                         "superseded_by": "",
                         "invalidated_at": "",
+                        "is_superseded": False,
                         "provenance_hash": provenance_hash,
                         "tile_index": tile.index,
                         "tile_count": len(tiles),
