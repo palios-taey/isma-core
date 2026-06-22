@@ -35,9 +35,18 @@ optional advanced surface. Nothing here blocks the core retrieval path.
 
 ### Scope of supersede-on-write (what it does and does NOT cover)
 
-Read-side exclusion of `is_superseded=true` tiles is applied on **all** read paths (the V1 and V2
-query-builders and the `ISMACore._semantic_search`/`recall` hybrid/BM25/vector path). Supersede-*on-write*,
-however, is **scoped** — adopters should know its boundaries (an independent audit flagged these):
+Read-side exclusion of `is_superseded=true` tiles is applied on the **primary answering/search paths**:
+the V1 and V2 query-builders, the `ISMACore._semantic_search`/`recall` hybrid/BM25/vector queries, and
+the V2 overlap-context fetch. It is **NOT yet applied on several secondary paths** (an independent audit
+found these) — a superseded tile can still surface through them:
+- parent/context expansion by id (`ISMACore._fetch_tile_by_id`, `retrieval._get_tile_by_id` via
+  `_expand_parents`) — direct UUID GETs with no validity check;
+- V2 content backfill (`retrieval_v2._fill_content`) — fetches by `content_hash` only;
+- relational adaptive lanes (`relational_retrieval` State Beta / State Gamma near-vector);
+- the MCP `isma_get_tile` tool — returns a tile by hash/scale unfiltered.
+Filtering these is tracked follow-up work; until then, exclusion is **primary-path**, not absolute.
+
+Supersede-*on-write* is also **scoped** — adopters should know its boundaries:
 
 - **Trigger is hash/lineage match, not arbitrary content change.** `_embed_to_weaviate` finds priors by
   matching `content_hash` or an explicit `lineage_root`. A *changed* document only auto-supersedes its
@@ -54,8 +63,10 @@ however, is **scoped** — adopters should know its boundaries (an independent a
 - `scripts/backfill_md_corpus.py --purge-on-change` hard-deletes stale `watch_md_v1` tiles (that path is
   delete-not-supersede by design).
 
-These are honest scope boundaries, not regressions; the governed core (read-side exclusion everywhere +
-supersede-on-write for the primary path) is correct and verified.
+These are honest scope boundaries. The **primary-path** read-side exclusion + the primary-path
+supersede-on-write are implemented and independently reviewed; **complete** exclusion across every
+secondary read path and a fully atomic/dead-lettered queue path are tracked follow-up work, not yet
+claimed as done.
 
 ## Configuration behavior
 
