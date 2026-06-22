@@ -17,13 +17,15 @@ optional advanced surface. Nothing here blocks the core retrieval path.
 
 ## Memory governance (validity / supersede)
 
-- **Supersede-exclusion needs the `is_superseded` boolean property + a backfill on an existing store.**
+- **Supersede-exclusion needs the `is_superseded` property present in the schema on an existing store.**
   Re-ingesting a newer version flags prior tiles `is_superseded=true`; retrieval default-excludes them
   via a boolean filter (`{is_superseded NotEqual true}` — a boolean, not an empty-string text filter,
   which Weaviate rejects on a word-tokenized field). A **fresh** store auto-creates the property on the
-  first write. An **existing** store must (1) have the property added to the `ISMA_Quantum` schema and
-  (2) get a one-time `is_superseded=false` backfill on current tiles — otherwise the default filter
-  errors on the missing prop or hides un-flagged tiles. Policy + fields: `MEMORY_GOVERNANCE.md`.
+  first governed write. An **existing** store must have the property **present in the `ISMA_Quantum`
+  schema** before the filter serves (else queries error `"no such prop"`). A values-backfill is
+  **optional**: verified on a real store, `NotEqual true` also matches tiles that *lack* the flag, so
+  legacy un-flagged tiles stay visible (graceful) rather than being hidden — only `is_superseded=true`
+  tiles are excluded. Policy + fields: `MEMORY_GOVERNANCE.md`; evidence: `audit_logs/p4_production_evidence.md`.
 - History/timeline reconstruction intentionally still sees superseded tiles (the exclusion is for
   answering queries, not for auditing lineage).
 

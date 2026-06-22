@@ -60,5 +60,6 @@ curl -X POST localhost:8095/search -H 'Content-Type: application/json' \
   `include_superseded=true` on `search` / `/tiles` to include them). Policy + fields in
   `MEMORY_GOVERNANCE.md`; dry-run audit of eviction candidates via
   `python3 -m isma.scripts.decay_sweep`. Enabling this on an **existing** store requires the
-  `is_superseded` boolean property + a one-time `is_superseded=false` backfill on current tiles; a
-  fresh store gets the property automatically on first write.
+  `is_superseded` property to be **present in the schema** (a fresh store auto-creates it on first
+  write); a values-backfill is optional — the filter matches un-flagged tiles, so legacy tiles stay
+  visible (only `is_superseded=true` is excluded).
