@@ -33,6 +33,7 @@ from isma.src.retrieval import (
     TILE_PROPERTIES,
     SearchResult,
     TileResult,
+    _build_where_filter,
     _get_embedding,
     _parse_tile,
 )
@@ -2396,11 +2397,14 @@ class ISMARetrievalV2:
                     f'{{ path: ["timestamp"], operator: LessThan, valueText: "{safe_val}" }}'
                 )
             elif key == "include_superseded":
-                if not bool(value):
-                    # Boolean flag, NOT empty-string text (word-tokenized → rejected).
-                    conditions.append(
-                        '{ path: ["is_superseded"], operator: NotEqual, valueBoolean: true }'
-                    )
+                # ISMA_Quantum_v2 is an ungoverned shadow class: it has no
+                # is_superseded property and nothing supersedes V2 tiles
+                # (supersession only runs on the governed V1 ISMA_Quantum class).
+                # Emitting the predicate here errors ("no such prop") and nulls the
+                # whole query. Accept the flag (callers pass it) but emit nothing for
+                # V2. Governed exclusion happens on the V1-class paths via
+                # retrieval._build_where_filter.
+                pass
             else:
                 raise ValueError(f"unsupported filter key: {key}")
 
