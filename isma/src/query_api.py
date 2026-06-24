@@ -138,6 +138,8 @@ class SearchRequest(BaseModel):
     include_superseded: Optional[bool] = False
     platform: Optional[str] = None
     source_type: Optional[str] = None
+    source_file: Optional[str] = None
+    ingest_pipeline: Optional[str] = None
     scale: Optional[str] = None
     session_id: Optional[str] = None
     document_id: Optional[str] = None
@@ -243,7 +245,8 @@ def stats():
 def search(req: SearchRequest):
     r = get_retrieval()
     filters = {}
-    for field_name in ["platform", "source_type", "scale", "session_id",
+    for field_name in ["platform", "source_type", "source_file",
+                       "ingest_pipeline", "scale", "session_id",
                        "document_id", "has_artifacts", "has_thinking",
                        "layer", "min_priority", "model", "dominant_motifs",
                        "hmm_enriched", "min_hmm_phi", "min_hmm_trust",

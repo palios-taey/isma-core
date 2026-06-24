@@ -403,6 +403,7 @@ def _escape_graphql(s: str) -> str:
 def _build_where_filter(
     platform: str = None,
     source_type: str = None,
+    ingest_pipeline: str = None,
     source_file: str = None,
     scale: str = None,
     scale_exclude: str = None,
@@ -437,6 +438,9 @@ def _build_where_filter(
     if source_file:
         conditions.append(
             f'{{ path: ["source_file"], operator: Equal, valueText: "{_escape_graphql(source_file)}" }}')
+    if ingest_pipeline:
+        conditions.append(
+            f'{{ path: ["ingest_pipeline"], operator: Equal, valueText: "{_escape_graphql(ingest_pipeline)}" }}')
     if scale:
         conditions.append(
             f'{{ path: ["scale"], operator: Equal, valueText: "{_escape_graphql(scale)}" }}')
@@ -659,6 +663,7 @@ class ISMARetrieval:
                # Filters
                platform: str = None,
                source_type: str = None,
+               ingest_pipeline: str = None,
                scale: str = None,
                scale_exclude: str = None,
                session_id: str = None,
@@ -743,6 +748,7 @@ class ISMARetrieval:
             platform=platform, source_type=source_type, scale=scale,
             scale_exclude=scale_exclude,
             include_superseded=include_superseded,
+            ingest_pipeline=ingest_pipeline,
             session_id=session_id, document_id=document_id,
             source_file=source_file, content_hash=content_hash,
             has_artifacts=has_artifacts, has_thinking=has_thinking,
