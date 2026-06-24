@@ -10,8 +10,8 @@
 
 The newly-ingested prose carries `hmm_enriched=false`. Any HMM-gated path EXCLUDES it.
 
-- ✅ USE: `/v2/search`, `/v2/search/adaptive`, `/search` (plain hybrid BM25+vector).
-- ✅ MCP: `isma_search` / `isma_adaptive_search` with **`enriched_only=false`** (the default — just don't set it true).
+- ✅ USE: **`/search`** (V1, plain hybrid BM25+vector over the full `ISMA_Quantum` corpus — this is where the prose lives). `/v2/search` and `/v2/search/adaptive` are also non-HMM but query `ISMA_Quantum_v2`, a partial-migration shadow class (~5% of tiles) that does **not** contain the authored-prose corpus — prefer `/search`.
+- ✅ MCP: `isma_search` (queries V1 — use this). `isma_adaptive_search` routes to the V2 shadow; prefer `isma_search`. Either way keep **`enriched_only=false`** (the default — just don't set it true).
 - ❌ NEVER: `/search/hmm`, `/v2/search/hmm`, `/search/motif`, `isma_motif_search`, or `enriched_only=true`. These filter to HMM-enriched tiles and will return a fraction of what exists — or miss the prose entirely.
 
 ## RULE 2 — GO DEEP. (No "a few results." Depth is mandatory.)
@@ -22,7 +22,7 @@ Defaults return ~10 shallow snippets. That is NOT acceptable for our work. Depth
 2. **Full passages, not snippets:** request **`scale:"full_4096"`** for complete ~2K-char passages. (search_512 is for pinpoint precision; full_4096 is for depth/context.) Do a depth pass at full_4096 AND a precision pass at search_512, then union.
 3. **Pull the whole `content` field**, never `content_preview`.
 4. **Multi-query:** run 3–6 phrasings of the topic (synonyms, the acronym + the expansion, the symptom + the mechanism) and UNION the hits — single-query retrieval under-covers.
-5. **Expand to the full document** when a hit matters: `GET /v2/expand/{content_hash}` or `GET /document/{content_hash}/text` returns the complete source file, not just the tile.
+5. **Expand to the full document** when a hit matters: `GET /document/{content_hash}/text` (or `GET /v2/expand/{content_hash}`) returns the complete source file, not just the tile.
 6. **Read across sources:** don't stop at the top hit — synthesize across the deep set. The point is coverage.
 
 ## RULE 3 — CANNOT-LIE on metrics.
@@ -36,42 +36,44 @@ The prose corpus contains SUPERSEDED drafts with SCRUBBED numbers (e.g. `nvidia_
 ### 0. `isma-query` CLI
 Wrap the canonical call so users cannot accidentally shallow- or HMM-query:
 ```bash
-isma-query "<topic>"                 # defaults: top_k=25, scale=full_4096, hybrid /v2/search on ISMA_Quantum
+isma-query "<topic>"                 # defaults: top_k=25, scale=full_4096
 isma-query "<topic>" --precision     # search_512 pinpoint pass (union with the default deep pass)
-isma-query "<topic>" --our-prose     # narrow to ingest_pipeline=watch_md_v1 (authored prose only)
+isma-query "<topic>" --our-prose     # narrow to authored prose only
 ```
-DEFAULT IS UNFILTERED ON PURPOSE - it searches transcripts + corpus + prose together for maximum depth. Only add `--our-prose` when you specifically want authored framing and nothing else. Class is `ISMA_Quantum` via the Query API (NOT a direct Weaviate BM25 shortcut - that is the wrong, shallow path).
+DEFAULT IS UNFILTERED ON PURPOSE - it searches transcripts + corpus + prose together for maximum depth. Only add `--our-prose` when you specifically want authored framing and nothing else. The `isma-query` wrapper calls `/search` over the full `ISMA_Quantum` corpus, and `--our-prose` narrows to `ingest_pipeline=watch_md_v1` (NOT a direct Weaviate BM25 shortcut - that is the wrong, shallow path).
 
 ### A. HTTP query_api
 Base: `http://your-query-host:8095`  (embedding endpoint example: `http://your-embedding-host:8091`; Weaviate example: `http://your-weaviate-host:8088`)
 
 ```bash
 # DEEP full-passage pass (the workhorse):
-curl -s -X POST http://your-query-host:8095/v2/search \
+curl -s -X POST http://your-query-host:8095/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"<topic phrasing>","top_k":25,"scale":"full_4096"}'
 
 # PRECISION snippet pass (union with the above):
-curl -s -X POST http://your-query-host:8095/v2/search \
+curl -s -X POST http://your-query-host:8095/search \
   -H 'Content-Type: application/json' \
   -d '{"query":"<topic phrasing>","top_k":40,"scale":"search_512"}'
 
 # Scope to OUR authored prose only (optional — drop to include transcripts/corpus too):
-#   add  "filters":{"ingest_pipeline":"watch_md_v1"}   (or post-filter client-side on that field)
+#   the authored prose carries ingest_pipeline="watch_md_v1" on the ISMA_Quantum class; a
+#   prose-filter field on /search is being added (until then, post-filter client-side on
+#   that field, or query Weaviate directly with a where-clause on ingest_pipeline).
 
 # Pull a COMPLETE source doc for a hit:
 curl -s http://your-query-host:8095/document/<content_hash>/text
-curl -s http://your-query-host:8095/v2/expand/<content_hash>
+curl -s http://your-query-host:8095/v2/expand/<content_hash>   # alt expand path
 ```
 Response: `{"tiles":[{content, content_hash, scale, source_file, source_type, hmm_enriched, score, ...}]}`.
 
 ### B. MCP
 ```
-isma_adaptive_search(query="what do we know about <topic>", top_k=25)   # entry point, auto-routes
-isma_search(query="<phrasing>", top_k=40)                               # hybrid; DO NOT pass enriched_only=true
+isma_search(query="<phrasing>", top_k=40)                               # hybrid over V1 ISMA_Quantum; DO NOT pass enriched_only=true — USE THIS
+isma_adaptive_search(query="what do we know about <topic>", top_k=25)   # routes to the V2 shadow class; prefer isma_search for prose
 isma_get_tile(content_hash) / isma_graph_traverse(...)                  # expand/relate
 ```
-NOTE: if your MCP `isma_search(scale="full_4096")` path returns empty, use the **HTTP `/v2/search` scale=full_4096** call above instead of the MCP scale filter.
+NOTE: if your MCP `isma_search(scale="full_4096")` path returns empty, use the **HTTP `/search` scale=full_4096** call above instead of the MCP scale filter.
 
 ---
 
@@ -81,4 +83,4 @@ Class `ISMA_Quantum`. Filter/read: `ingest_pipeline` ("watch_md_v1" = our prose)
 Coverage now: ~2,400 files / 34K search_512 + 8.3K context_2048 + 4.4K full_4096 prose tiles. Auto-updated every 15 min by the `md-corpus-watch` watcher (new/changed `.md` ingested additively).
 
 ## ONE-LINE FOR EACH INSTANCE
-> Querying ISMA for prose depth? Use `/v2/search` (or `isma_adaptive_search`), `top_k≥25`, do a `scale:"full_4096"` pass + a `search_512` pass, multi-phrase the query, expand the docs that matter, NEVER use an HMM/motif/enriched_only path, and cross-check any number against your fleet's canonical-baselines artifact. Go deep — a handful of tiles is a failed query.
+> Querying ISMA for prose depth? Use `/search` (V1, full `ISMA_Quantum` corpus — or MCP `isma_search`), `top_k≥25`, do a `scale:"full_4096"` pass + a `search_512` pass, multi-phrase the query, expand the docs that matter, NEVER use an HMM/motif/enriched_only path (and avoid `/v2/*` — it's the partial shadow class without the prose), and cross-check any number against your fleet's canonical-baselines artifact. Go deep — a handful of tiles is a failed query.
