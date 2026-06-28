@@ -1300,10 +1300,11 @@ class ISMARetrieval:
         mapping = _get_canonical_mapping()
         result = []
         for tid, theme in sorted(mapping["theme_registry"].items()):
+            description = theme.get("description") or theme.get("display_name") or ""
             result.append({
                 "theme_id": tid,
                 "display_name": theme["display_name"],
-                "description": theme["description"],
+                "description": description,
                 "required_motifs": theme["required_motifs"],
                 "supporting_motifs": theme["supporting_motifs"],
             })

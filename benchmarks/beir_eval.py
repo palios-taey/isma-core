@@ -3,7 +3,7 @@
 Public RAG benchmark on BEIR SciFact.
 
 Downloads the SciFact BEIR dataset, indexes its abstracts into a dedicated
-Weaviate class, runs dense and hybrid retrieval with the production embedding
+Weaviate class, runs dense and hybrid retrieval with the configured embedding
 server, and scores Recall@10 / nDCG@10 / MRR@10 against the published qrels.
 
 Usage:

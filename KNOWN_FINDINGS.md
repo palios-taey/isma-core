@@ -15,6 +15,15 @@ optional advanced surface. Nothing here blocks the core retrieval path.
   with the optional enrichment layers (rerank / phi-tiling / query classifier) **off** — no
   corpus-specific tuning. Reproduce with `BEIR_DATASET=scifact python3 benchmarks/beir_eval.py`.
 
+## Live production snapshot (2026-06-28)
+
+- **Query API** — `http://127.0.0.1:8095` is serving from `/home/mira/isma-core` against the live production store on `http://localhost:8088`.
+- **Weaviate `ISMA_Quantum` tiles** — 1,547,198
+- **Neo4j `ISMASession` / `ISMAExchange` / `Document`** — 10,159 / 65,010 / 25,850
+- **HMM substrate** — `HMMTile` 207,679; `HMMMotif` 57; `EXPRESSES` 462,384; `RELATES_TO` 690,272
+- **Motif registry** — 31 motifs live in `/motifs`
+- **Theme registry** — 19 themes live in `/themes`
+
 ## Memory governance (validity / supersede)
 
 - **Supersede-exclusion needs the `is_superseded` property present in the schema on an existing store.**
@@ -86,6 +95,9 @@ claimed as done.
   expose it to untrusted callers expecting a hard read-only guarantee.
 - **`isma_graph_traverse` depth is capped at 3.** This is now declared in the tool's JSON schema
   (`"maximum": 3`), so clients see the constraint rather than hitting it silently.
+- **`/search/motif` is HMM-prefixed and shape-specific.** It expects `HMM.*` motif ids, and the response
+  is `tile_hashes` + `tiles_with_amplitude` + `total_candidates` rather than a bare `tiles` array. Use
+  `HMM.*` motif ids when you need motif hits; bare labels are not the public contract.
 
 (Previously listed here and since fixed: the `isma_search` empty-scale-filter result now returns an
 explanatory `note`; `hmm_package_builder` ownership now uses an exact match, not a substring.)
