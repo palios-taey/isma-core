@@ -31,7 +31,7 @@ def _require_env(name: str, example: str) -> str:
     raise RuntimeError(f"set {name} - e.g. {example}")
 
 # --- Vector Store (Weaviate) ---
-WEAVIATE_URL = _require_env("WEAVIATE_URL", "http://localhost:8080")
+WEAVIATE_URL = _require_env("WEAVIATE_URL", "http://localhost:8088")
 WEAVIATE_CLASS = "ISMA_Quantum"
 
 # --- Knowledge Graph (Neo4j) ---
@@ -62,9 +62,12 @@ ISMA_STATE_DIR = os.environ.get(
     "ISMA_STATE_DIR", os.path.expanduser("~/.local/share/isma")
 )
 ISMA_DATA_DIR = os.environ.get("ISMA_DATA_DIR", os.path.expanduser("~/.local/share/isma/data"))
+_DEFAULT_CANONICAL_MAPPING_PATH = Path(__file__).resolve().parents[2] / "data/corpus/f1_canonical_mapping.json"
+if not _DEFAULT_CANONICAL_MAPPING_PATH.exists():
+    _DEFAULT_CANONICAL_MAPPING_PATH = Path("/home/mira/data/corpus/f1_canonical_mapping.json")
 ISMA_CANONICAL_MAPPING_PATH = os.environ.get(
     "ISMA_CANONICAL_MAPPING_PATH",
-    str(Path(ISMA_STATE_DIR) / "canonical_mapping.json"),
+    str(_DEFAULT_CANONICAL_MAPPING_PATH),
 )
 ISMA_TEMPORAL_LOG_DIR = os.environ.get(
     "ISMA_TEMPORAL_LOG_DIR",
