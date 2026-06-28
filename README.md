@@ -1,6 +1,6 @@
 # ISMA — Hybrid Retrieval (RAG) System
 
-A production hybrid retrieval service for document search and RAG: **dense vector + BM25 search**, **multi-scale chunking**, **query-type routing**, optional **cross-encoder reranking**, and a **FastAPI** serving layer. Bring your own embedding model (defaults to Qwen3-Embedding-8B behind an OpenAI-compatible endpoint; any `/embed` endpoint works).
+A hybrid retrieval service for document search and RAG: **dense vector + BM25 search**, **multi-scale chunking**, **query-type routing**, optional **cross-encoder reranking**, and a **FastAPI** serving layer. Bring your own embedding model (defaults to Qwen3-Embedding-8B behind an OpenAI-compatible endpoint; any `/embed` endpoint works).
 
 ---
 
