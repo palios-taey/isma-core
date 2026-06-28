@@ -33,7 +33,7 @@ EVENT_TYPES = {
     "BRANCH_MERGED",
 }
 
-DEFAULT_LOG_PATH = "{STATE_DIR}/hmm_events.jsonl"
+DEFAULT_LOG_PATH = str(Path(STATE_DIR) / "hmm_events.jsonl")
 
 
 @dataclass

@@ -6,7 +6,7 @@ Runs 100 queries across 5 categories against the current ISMA retrieval pipeline
 measuring Recall@k, MRR, Precision@k, latency, and dedup ratio.
 
 Usage:
-    python3 benchmark_retrieval.py                    # Full run, save to {STATE_DIR}/
+    python3 benchmark_retrieval.py                    # Full run, save to the configured benchmark output dir
     python3 benchmark_retrieval.py --output /tmp/bench.json
     python3 benchmark_retrieval.py --category exact   # Single category
     python3 benchmark_retrieval.py --dry-run           # Parse queries only, no search
@@ -420,7 +420,7 @@ def _agg_metrics(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 def main():
     parser = argparse.ArgumentParser(description="ISMA Retrieval Benchmark")
     parser.add_argument("--output", "-o", default=None,
-                        help="Output file path (default: {STATE_DIR}/benchmark_<timestamp>.json)")
+                        help="Output file path (default: <configured benchmark output dir>/benchmark_<timestamp>.json)")
     parser.add_argument("--queries", "-q",
                         default=os.path.join(os.path.dirname(__file__), "benchmark_queries_v2.json"),
                         help="Path to benchmark queries JSON")
