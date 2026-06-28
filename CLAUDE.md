@@ -17,6 +17,7 @@ This repository is the public ISMA core: retrieval, ingest, query API, HMM stora
 - Core dependencies are environment-driven.
 - `WEAVIATE_URL` and `EMBEDDING_URL` fail loud when unset.
 - `NEO4J_URI` defaults to localhost unless you override it.
+- Production `WEAVIATE_URL` is `http://localhost:8088`; the local `docker compose` demo still maps the store on `8080`.
 - Copy `.env.example` to `.env` and fill in your own service endpoints before running anything substantial.
 - Do not hardcode machine-local paths or private network addresses in committed code.
 

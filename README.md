@@ -11,7 +11,7 @@ A hybrid retrieval service for document search and RAG: **dense vector + BM25 se
 - **Query-type routing** — a lightweight classifier routes exact / conceptual / temporal queries to the strategy that serves them best.
 - **Optional cross-encoder reranking** — Qwen3-Reranker-8B. **Disabled by default**: in our testing it did not improve results on our corpus (see [Benchmarks](#benchmarks)); enable and re-benchmark for your data.
 - **Filter-aware semantic cache** — Redis-backed, keyed on query + filters.
-- **FastAPI service** — `/health`, `/stats`, `/search`, `/search/bm25`; write endpoints are API-key gated (`X-API-Key`), CORS is explicit (no `*`).
+- **FastAPI service** — `/health`, `/stats`, `/search`, `/search/hmm`, `/search/bm25`, `/search/motif`, `/motifs`, `/themes`, `/document/...`; write endpoints are API-key gated (`X-API-Key`), CORS is explicit (no `*`).
 - **Optional graph enrichment** — Neo4j relational metadata for advanced relational retrieval (off the core path; not required to run the system).
 
 ---
@@ -90,6 +90,8 @@ uvicorn isma.src.query_api:app --host 0.0.0.0 --port 8095
 Read/search endpoints are open; write and operationally expensive endpoints require `ISMA_API_KEY` (sent as `X-API-Key`). `--host 0.0.0.0` is safe for writes because they are auth-gated.
 
 This table is a partial list; see `isma/src/query_api.py` for the full surface.
+
+Production runs the query API against the live Weaviate store on `http://localhost:8088`; the local `docker compose` demo still maps Weaviate on `8080`, so keep the two endpoints distinct when you reproduce or benchmark.
 
 | Method | Path | Description |
 |--------|------|-------------|

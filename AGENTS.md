@@ -16,7 +16,7 @@ MCP client at the server.
 |------|---------|
 | `isma_search` | Hybrid vector + BM25 semantic search (top-k); optional `platform` / `scale` filters |
 | `isma_adaptive_search` | Auto-classifies the query (exact / temporal / conceptual / relational / motif) and routes to the best strategy |
-| `isma_motif_search` | Tiles expressing a given motif, ranked by amplitude |
+| `isma_motif_search` | Tiles expressing a given HMM motif, returned as `tile_hashes` + `tiles_with_amplitude`, ranked by amplitude |
 | `isma_get_tile` | Full content + metadata for a `content_hash` (all scales) |
 | `isma_graph_traverse` | Follow Neo4j `RELATES_TO` / `EXPRESSES` edges from a tile |
 | `isma_stats` | Index statistics |
@@ -32,6 +32,8 @@ Endpoints include `/search`, `/search/hmm`, `/search/bm25`, `/search/motif`, `/s
 `/document/...`. Read/search endpoints are open; write endpoints require `ISMA_API_KEY` (header
 `X-API-Key`).
 
+`/search/motif` expects an `HMM.*` motif id and returns `tile_hashes`, `tiles_with_amplitude`, and `total_candidates` rather than a bare `tiles` list.
+
 ```bash
 curl -X POST localhost:8095/search -H 'Content-Type: application/json' \
   -d '{"query": "your question", "top_k": 10}'
@@ -39,7 +41,7 @@ curl -X POST localhost:8095/search -H 'Content-Type: application/json' \
 
 ## Setup an adopter must satisfy
 
-1. `cp .env.example .env` — set `WEAVIATE_URL` + `EMBEDDING_URL` (required; they fail loud if unset).
+1. `cp .env.example .env` — set `WEAVIATE_URL` + `EMBEDDING_URL` (required; they fail loud if unset). For the live production store, `WEAVIATE_URL` should point at `http://localhost:8088`; only the local demo stack uses `8080`.
    `NEO4J_URI` is optional (only the graph-enrichment features use it).
 2. `pip install .` for the core, or `pip install .[server]` to also run the bundled
    Qwen3-Embedding-8B server. (`requirements.txt` is the equivalent for a non-packaged checkout.)
