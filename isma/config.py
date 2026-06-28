@@ -31,7 +31,7 @@ def _require_env(name: str, example: str) -> str:
     raise RuntimeError(f"set {name} - e.g. {example}")
 
 # --- Vector Store (Weaviate) ---
-WEAVIATE_URL = _require_env("WEAVIATE_URL", "http://localhost:8088")
+WEAVIATE_URL = _require_env("WEAVIATE_URL", "http://localhost:8080")
 WEAVIATE_CLASS = "ISMA_Quantum"
 
 # --- Knowledge Graph (Neo4j) ---
