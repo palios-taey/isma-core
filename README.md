@@ -1,6 +1,6 @@
 # ISMA — Hybrid Retrieval (RAG) System
 
-A hybrid retrieval service for document search and RAG: **dense vector + BM25 search**, **multi-scale chunking**, **query-type routing**, optional **cross-encoder reranking**, and a **FastAPI** serving layer. Bring your own embedding model (defaults to Qwen3-Embedding-8B behind an OpenAI-compatible endpoint; any `/embed` endpoint works).
+A hybrid retrieval service for document search and RAG: **dense vector + BM25 search**, **multi-scale chunking**, **query-type routing**, optional **cross-encoder reranking**, and a **FastAPI** serving layer. Core retrieval is the primary surface; optional HMM/graph enrichment remains beta. Bring your own embedding model (defaults to Qwen3-Embedding-8B behind an OpenAI-compatible endpoint; any `/embed` endpoint works).
 
 ---
 
@@ -25,15 +25,14 @@ Evaluated on the **BEIR SciFact** test split (5,183 documents, 300 judged test q
 | Config | Recall@10 | nDCG@10 | MRR@10 |
 |--------|-----------|---------|--------|
 | Dense (Qwen3-Embedding-8B) | 0.800 | 0.651 | 0.608 |
-| **Hybrid (dense + BM25, α=0.5)** | **0.865–0.869** | **0.725–0.726** | **0.686–0.687** |
+| **Hybrid (dense + BM25, α=0.5)** | **0.869** | **0.726** | **0.686** |
 
-*Reproduced across two independent end-to-end runs (committed artifact: `benchmarks/results/scifact.json` holds the committed run: hybrid 0.869 / 0.726 / 0.687).* **Dense reproduces exactly** — identical to four decimals run-to-run. **Hybrid shows ~0.3% run-to-run variance**: a second independent run scored Recall@10 0.865 / nDCG 0.725 / MRR 0.686, so hybrid is reported as a range, not a single fixed point. The variance arises in the BM25/fusion component (the dense vector path is bit-stable); *inferred* cause is tie-breaking/index-state sensitivity in keyword scoring. For reference, BM25 alone scores ≈0.665 nDCG@10 on SciFact (published BEIR baseline); this hybrid configuration sits in the range of strong modern dense retrievers. These numbers reflect the **generalizable retrieval core** (embedding model + Weaviate hybrid search), with the ISMA enrichment layers (HMM rerank / phi-tiling / query classifier) OFF — no corpus-specific tuning.
+*Committed artifact:* `benchmarks/results/scifact.json` holds one published run: hybrid `0.869 / 0.726 / 0.686`. A second observed end-to-end run landed within ~0.3% of that artifact. **Dense reproduces exactly** — identical to four decimals run-to-run. The variance arises in the BM25/fusion component (the dense vector path is bit-stable); *inferred* cause is tie-breaking/index-state sensitivity in keyword scoring. For reference, BM25 alone scores ≈0.665 nDCG@10 on SciFact (published BEIR baseline); this hybrid configuration sits in the range of strong modern dense retrievers. These numbers reflect the **generalizable retrieval core** (embedding model + Weaviate hybrid search), with the ISMA enrichment layers (HMM rerank / phi-tiling / query classifier) OFF — no corpus-specific tuning.
 
 Reproduce (from the repo root, with the embedding server + Weaviate running):
 
 ```bash
-pip install -r requirements.txt
-BEIR_DATASET=scifact python3 benchmarks/beir_eval.py   # downloads the public BEIR set, writes benchmarks/results/scifact.json
+PYTHONPATH=. BEIR_DATASET=scifact python3 benchmarks/beir_eval.py   # downloads the public BEIR set, writes benchmarks/results/scifact.json
 ```
 
 *Note on prior numbers:* an internal evaluation harness (`isma/scripts/benchmark_retrieval.py`) also exists, but it runs against a private corpus with a small query set — those numbers are not reproducible or comparable across systems, so they are **not** reported here. The BEIR numbers above are the ones to trust.
@@ -89,6 +88,8 @@ uvicorn isma.src.query_api:app --host 0.0.0.0 --port 8095
 ```
 
 Read/search endpoints are open; write and operationally expensive endpoints require `ISMA_API_KEY` (sent as `X-API-Key`). `--host 0.0.0.0` is safe for writes because they are auth-gated.
+
+This table is a partial list; see `isma/src/query_api.py` for the full surface.
 
 | Method | Path | Description |
 |--------|------|-------------|

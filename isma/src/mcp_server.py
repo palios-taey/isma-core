@@ -144,7 +144,7 @@ def get_tools() -> List[Dict]:
         {
             "name": "isma_search",
             "description": (
-                "Semantic search across 1M+ ISMA tiles. Returns tiles ranked by "
+                "Semantic search across indexed ISMA tiles. Returns tiles ranked by "
                 "hybrid vector+BM25 relevance with HMM motif reranking. "
                 "Use for finding content about specific topics, concepts, or events."
             ),
@@ -613,7 +613,7 @@ def run_server():
             if method == 'initialize':
                 write_message({"jsonrpc": "2.0", "id": msg_id, "result": {
                     "protocolVersion": "2024-11-05",
-                    "serverInfo": {"name": "isma-memory", "version": "1.0.0"},
+                    "serverInfo": {"name": "isma-memory", "version": "0.1.0"},
                     "capabilities": {"tools": {}},
                 }})
 

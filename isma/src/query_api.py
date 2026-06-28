@@ -91,8 +91,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ISMA Query API",
-    description="Semantic search over 993K embedded tiles with HMM enrichment",
-    version="1.0.0",
+    description="Semantic search over indexed tiles with HMM enrichment",
+    version="0.1.0",
     lifespan=lifespan,
 )
 
