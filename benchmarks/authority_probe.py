@@ -7,6 +7,7 @@ import json
 import math
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, asdict
 from difflib import SequenceMatcher
@@ -22,7 +23,7 @@ DEFAULT_WEAVIATE_URL = os.environ.get("ISMA_WEAVIATE_URL", "http://localhost:808
 DEFAULT_SAMPLE_LIMIT = 5000
 DEFAULT_CLUSTER_CAP = 35
 DEFAULT_TOP_K = 10
-DEFAULT_WORKERS = 8
+DEFAULT_WORKERS = 1
 DEFAULT_QUERY_CHARS = 1200
 DEFAULT_OUT_DIR = REPO_ROOT / "benchmarks" / "results"
 DEFAULT_JSON = DEFAULT_OUT_DIR / "authority_probe.json"
@@ -124,12 +125,26 @@ def graphql_post(weaviate_url: str, query: str) -> dict[str, Any]:
 
 
 def query_api_post(query_api: str, path: str, body: dict[str, Any]) -> dict[str, Any]:
-    resp = requests.post(f"{query_api}{path}", json=body, timeout=120)
-    resp.raise_for_status()
-    payload = resp.json()
-    if not isinstance(payload, dict):
-        raise ProbeError(f"{path} response was not an object")
-    return payload
+    delay = 0.5
+    last_exc: Exception | None = None
+    for attempt in range(1, 5):
+        try:
+            resp = requests.post(f"{query_api}{path}", json=body, timeout=120)
+            if resp.status_code >= 500 or resp.status_code == 429:
+                raise ProbeError(f"{path} transient HTTP {resp.status_code}: {resp.text[:200]}")
+            resp.raise_for_status()
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                raise ProbeError(f"{path} response was not an object")
+            return payload
+        except (requests.RequestException, ProbeError) as exc:
+            last_exc = exc
+            if attempt >= 4:
+                break
+            time.sleep(delay)
+            delay *= 2
+    assert last_exc is not None
+    raise ProbeError(f"{path} failed after retries: {last_exc}") from last_exc
 
 
 def load_sample_tiles(weaviate_url: str, limit: int) -> list[Tile]:
@@ -342,7 +357,8 @@ def collect_candidate_pairs(
     query_chars: int,
 ) -> list[CandidatePair]:
     pair_map: dict[tuple[str, str], dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+    max_workers = 1
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = [
             pool.submit(fetch_neighbors_for_tile, query_api, source_file, tile, top_k, query_chars)
             for tile in tiles
