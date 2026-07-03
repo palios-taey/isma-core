@@ -79,6 +79,7 @@ class Tile:
     content_hash: str
     source_file: str
     scale: str
+    tile_index: int
     content: str
     is_superseded: bool
 
@@ -93,6 +94,8 @@ class CandidatePair:
     right_source_file: str
     left_scale: str
     right_scale: str
+    left_tile_index: int
+    right_tile_index: int
     left_text: str
     right_text: str
     left_score: float
@@ -137,6 +140,7 @@ def load_sample_tiles(weaviate_url: str, limit: int) -> list[Tile]:
           content_hash
           source_file
           scale
+          tile_index
           content
           is_superseded
           _additional {{ id }}
@@ -155,6 +159,7 @@ def load_sample_tiles(weaviate_url: str, limit: int) -> list[Tile]:
                 content_hash=str(row.get("content_hash") or ""),
                 source_file=str(row.get("source_file") or ""),
                 scale=str(row.get("scale") or ""),
+                tile_index=int(row.get("tile_index") or 0),
                 content=str(row.get("content") or ""),
                 is_superseded=bool(row.get("is_superseded")),
             )
@@ -186,6 +191,7 @@ def fetch_cluster(weaviate_url: str, source_file: str, cap: int) -> list[Tile]:
           content_hash
           source_file
           scale
+          tile_index
           content
           is_superseded
           _additional {{ id }}
@@ -204,11 +210,12 @@ def fetch_cluster(weaviate_url: str, source_file: str, cap: int) -> list[Tile]:
                 content_hash=str(row.get("content_hash") or ""),
                 source_file=str(row.get("source_file") or ""),
                 scale=str(row.get("scale") or ""),
+                tile_index=int(row.get("tile_index") or 0),
                 content=str(row.get("content") or ""),
                 is_superseded=bool(row.get("is_superseded")),
             )
         )
-    return sorted(tiles, key=lambda t: (t.content_hash, t.scale, t.tile_id))
+    return sorted(tiles, key=lambda t: (t.content_hash, t.scale, t.tile_index, t.tile_id))
 
 
 def normalize_text(text: str) -> str:
@@ -242,15 +249,19 @@ def pair_metrics(left: str, right: str) -> tuple[float, float, float]:
 
 def classify_pair(left: Tile, right: Tile) -> tuple[str, float, bool]:
     similarity, jaccard, length_ratio = pair_metrics(left.content, right.content)
-    dup_exact = normalize_text(left.content) == normalize_text(right.content)
-    dup_same_hash = bool(left.content_hash) and left.content_hash == right.content_hash
+    dup_same_identity = (
+        bool(left.content_hash)
+        and left.content_hash == right.content_hash
+        and left.scale == right.scale
+        and int(left.tile_index) == int(right.tile_index)
+    )
     correction_hits = cue_score(left.content, CORRECTION_CUES) + cue_score(right.content, CORRECTION_CUES)
     refinement_hits = cue_score(left.content, REFINEMENT_CUES) + cue_score(right.content, REFINEMENT_CUES)
     contest_hits = cue_score(left.content, OPEN_CONTEST_CUES) + cue_score(right.content, OPEN_CONTEST_CUES)
 
-    if dup_same_hash or dup_exact or (similarity >= 0.96 and jaccard >= 0.90 and length_ratio >= 0.94):
+    if dup_same_identity:
         relation = "duplicate"
-        confidence = 0.99 if dup_same_hash else min(0.99, 0.95 + 0.04 * similarity)
+        confidence = 0.99
     elif correction_hits and similarity >= 0.72 and jaccard >= 0.55:
         relation = "correction"
         confidence = min(0.98, 0.82 + 0.18 * similarity)
@@ -312,6 +323,7 @@ def fetch_neighbors_for_tile(
                     content_hash=str(row.get("content_hash") or ""),
                     source_file=neighbor_source,
                     scale=str(row.get("scale") or ""),
+                    tile_index=int(row.get("tile_index") or 0),
                     content=str(row.get("content") or ""),
                     is_superseded=bool(row.get("is_superseded")),
                 ),
@@ -367,6 +379,8 @@ def collect_candidate_pairs(
                 right_source_file=right.source_file,
                 left_scale=left.scale,
                 right_scale=right.scale,
+                left_tile_index=left.tile_index,
+                right_tile_index=right.tile_index,
                 left_text=left.content,
                 right_text=right.content,
                 left_score=left_score,
@@ -430,6 +444,7 @@ def render_markdown(report: dict[str, Any]) -> str:
                 f"- jaccard: {pair['jaccard']}",
                 f"- length_ratio: {pair['length_ratio']}",
                 f"- left_scale/right_scale: {pair['left_scale']} / {pair['right_scale']}",
+                f"- left_tile_index/right_tile_index: {pair['left_tile_index']} / {pair['right_tile_index']}",
                 f"- left_score/right_score: {pair['left_score']} / {pair['right_score']}",
                 f"- left_text: {pair['left_text'][:500].replace(chr(10), ' ')}",
                 f"- right_text: {pair['right_text'][:500].replace(chr(10), ' ')}",
