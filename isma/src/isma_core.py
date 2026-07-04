@@ -493,6 +493,29 @@ class ISMACore:
             pass
         return None
 
+    def _patch_isma_quantum_tile(
+        self,
+        tile_id: str,
+        properties: Dict[str, Any],
+        operation: str,
+    ) -> None:
+        if not tile_id:
+            raise ValueError(f"{operation} requires a tile id")
+        url = f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/objects/ISMA_Quantum/{tile_id}"
+        try:
+            response = requests.patch(
+                url,
+                json={"properties": properties},
+                timeout=5,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(f"{operation} patch unreachable for {tile_id[:12]}: {e}") from e
+        if response.status_code not in (200, 204):
+            raise RuntimeError(
+                f"{operation} patch failed for {tile_id[:12]}: HTTP "
+                f"{response.status_code} {response.text[:160]}"
+            )
+
     def _get_embedding(self, text: str) -> Optional[List[float]]:
         """Get embedding with Redis cache (per Grok's optimization)."""
         try:
@@ -745,6 +768,92 @@ class ISMACore:
                 raise RuntimeError(
                     f"supersede patch failed for {tile_id[:12]}: HTTP {resp.status_code} {resp.text[:160]}"
                 )
+
+    def mark_revised(
+        self,
+        old_tile_ids: List[str],
+        new_tile_ids: List[str],
+        evidence: str = "",
+        old_graph_ids: Optional[List[str]] = None,
+        new_graph_ids: Optional[List[str]] = None,
+    ) -> None:
+        """Mark a mind-change revision without hiding the prior tile."""
+        old_tile_ids = list(dict.fromkeys(t for t in old_tile_ids if t))
+        new_tile_ids = list(dict.fromkeys(t for t in new_tile_ids if t))
+        if not old_tile_ids or not new_tile_ids:
+            raise ValueError("mark_revised requires at least one old tile and one new tile")
+
+        old_props = {
+            "correction_status": "revised",
+            "memory_zone": "sandbox",
+            "authority": "advisory",
+            "is_superseded": False,
+            "superseded_by": "",
+            "invalidated_at": "",
+        }
+        new_props = {
+            "correction_status": "current",
+            "memory_zone": "canon",
+            "authority": "binding",
+            "is_superseded": False,
+        }
+
+        for tile_id in old_tile_ids:
+            self._patch_isma_quantum_tile(tile_id, old_props, "revised-old")
+        for tile_id in new_tile_ids:
+            self._patch_isma_quantum_tile(tile_id, new_props, "revised-new")
+
+        try:
+            from .hmm.neo4j_store import HMMNeo4jStore
+        except ImportError:
+            from hmm.neo4j_store import HMMNeo4jStore
+
+        graph_old_ids = list(dict.fromkeys(t for t in (old_graph_ids or old_tile_ids) if t))
+        graph_new_ids = list(dict.fromkeys(t for t in (new_graph_ids or new_tile_ids) if t))
+        if not graph_old_ids or not graph_new_ids:
+            raise ValueError("mark_revised requires graph ids for the REVISES edge")
+        store = HMMNeo4jStore()
+        for new_id in graph_new_ids:
+            for old_id in graph_old_ids:
+                store.mark_revised(old_id, new_id, evidence=evidence)
+
+    def mark_contested(
+        self,
+        tile_a_id: str,
+        tile_b_id: str,
+        confidence: float,
+        resolution: str = "",
+        detected_by: str = "operator",
+        graph_tile_a_id: Optional[str] = None,
+        graph_tile_b_id: Optional[str] = None,
+    ) -> None:
+        """Mark an unresolved contradiction while keeping both tiles visible."""
+        if not tile_a_id or not tile_b_id:
+            raise ValueError("mark_contested requires two tile ids")
+        if tile_a_id == tile_b_id:
+            raise ValueError("mark_contested requires two distinct tile ids")
+
+        props = {
+            "correction_status": "contested",
+            "is_superseded": False,
+            "superseded_by": "",
+            "invalidated_at": "",
+        }
+        self._patch_isma_quantum_tile(tile_a_id, props, "contested-a")
+        self._patch_isma_quantum_tile(tile_b_id, props, "contested-b")
+
+        try:
+            from .hmm.neo4j_store import HMMNeo4jStore
+        except ImportError:
+            from hmm.neo4j_store import HMMNeo4jStore
+
+        HMMNeo4jStore().mark_contradiction(
+            graph_tile_a_id or tile_a_id,
+            graph_tile_b_id or tile_b_id,
+            confidence=confidence,
+            resolution=resolution,
+            detected_by=detected_by,
+        )
 
     def _embed_to_weaviate(self, event: Event) -> bool:
         """Embed event content to Weaviate using multi-scale tiling.

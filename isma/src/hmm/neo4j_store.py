@@ -6,6 +6,7 @@ All writes are MERGE-based (safe to re-run).
 
 Phase 4 additions:
   - SUPERSEDES: tracks re-enrichment version chains
+  - REVISES: tracks non-destructive mind-change lineage
   - CONTRADICTS: first-class contradiction edges with confidence
   - IN_SESSION: links HMMTile to ISMASession via shared content_hash
   - Temporal chain queries and session reconstruction
@@ -468,6 +469,57 @@ class HMMNeo4jStore:
                     evidence=evidence,
                 )
 
+    def mark_revised(
+        self,
+        old_tile_id: str,
+        new_tile_id: str,
+        evidence: str = "",
+        old_memory_zone: str = "sandbox",
+        old_authority: str = "advisory",
+        new_memory_zone: str = "canon",
+        new_authority: str = "binding",
+    ):
+        """Create a REVISES edge for non-destructive mind-change lineage."""
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        query = """
+        MATCH (new:HMMTile {tile_id: $new_tile_id})
+        MATCH (old:HMMTile {tile_id: $old_tile_id})
+        MERGE (new)-[r:REVISES]->(old)
+        SET r.valid_from = coalesce(new.enriched_at, new.valid_from, $now),
+            r.revised_at = $now,
+            r.evidence = $evidence,
+            old.correction_status = 'revised',
+            old.memory_zone = $old_memory_zone,
+            old.authority = $old_authority,
+            old.is_superseded = false,
+            old.superseded_by = "",
+            old.invalidated_at = "",
+            old.valid_from = coalesce(old.valid_from, old.enriched_at, $now),
+            new.correction_status = 'current',
+            new.memory_zone = $new_memory_zone,
+            new.authority = $new_authority,
+            new.is_superseded = false,
+            new.valid_from = coalesce(new.valid_from, new.enriched_at, $now)
+        RETURN count(r) AS revised
+        """
+        with self.driver.session() as session:
+            result = session.run(
+                query,
+                new_tile_id=new_tile_id,
+                old_tile_id=old_tile_id,
+                now=now,
+                evidence=evidence,
+                old_memory_zone=old_memory_zone,
+                old_authority=old_authority,
+                new_memory_zone=new_memory_zone,
+                new_authority=new_authority,
+            )
+            rec = result.single()
+            if not rec or rec["revised"] < 1:
+                raise RuntimeError(
+                    f"REVISES edge not created for {new_tile_id} -> {old_tile_id}"
+                )
+
     def mark_contradiction(
         self,
         tile_a_id: str,
@@ -490,9 +542,10 @@ class HMMNeo4jStore:
             r.confidence = $confidence,
             r.resolution = $resolution,
             r.detected_by = $detected_by
+        RETURN count(r) AS contradicted
         """
         with self.driver.session() as session:
-            session.run(
+            result = session.run(
                 query,
                 tile_a=tile_a_id,
                 tile_b=tile_b_id,
@@ -501,6 +554,11 @@ class HMMNeo4jStore:
                 resolution=resolution,
                 detected_by=detected_by,
             )
+            rec = result.single()
+            if not rec or rec["contradicted"] < 1:
+                raise RuntimeError(
+                    f"CONTRADICTS edge not created for {tile_a_id} -> {tile_b_id}"
+                )
 
     def link_tile_to_session(self, tile_id: str, session_id: str, exchange_index: int = -1):
         """Create IN_SESSION edge from HMMTile to ISMASession.
