@@ -826,6 +826,21 @@ class ISMACore:
             sort_keys=True,
         )
 
+    def _transition_provenance_hash(
+        self,
+        event_type: str,
+        action: str,
+        payload: Dict[str, Any],
+    ) -> str:
+        return json.dumps(
+            {
+                "event_type": event_type,
+                "action": action,
+                "payload": payload,
+            },
+            sort_keys=True,
+        )
+
     def _emit_correction_event(
         self,
         tile_id: str,
@@ -857,6 +872,92 @@ class ISMACore:
         except Exception as e:
             raise RuntimeError(f"correction event log failed for {tile_id[:12]}: {e}") from e
 
+    def _emit_branch_created_event(
+        self,
+        old_tile_ids: List[str],
+        new_tile_ids: List[str],
+        evidence: str,
+        old_graph_ids: List[str],
+        new_graph_ids: List[str],
+        write_graph: bool,
+    ) -> None:
+        try:
+            from .hmm.eventlog import EventLog
+        except ImportError:
+            from hmm.eventlog import EventLog
+
+        payload = {
+            "action": "mark_revised",
+            "correction_status": "revised",
+            "old_tile_ids": old_tile_ids,
+            "new_tile_ids": new_tile_ids,
+            "old_graph_ids": old_graph_ids,
+            "new_graph_ids": new_graph_ids,
+            "evidence": evidence,
+            "write_graph": write_graph,
+        }
+        payload["provenance_hash"] = self._transition_provenance_hash(
+            "BRANCH_CREATED",
+            "mark_revised",
+            payload,
+        )
+
+        try:
+            EventLog().emit(
+                "BRANCH_CREATED",
+                refs={
+                    "old_tile_id": old_tile_ids[0],
+                    "new_tile_id": new_tile_ids[0],
+                },
+                payload=payload,
+            )
+        except Exception as e:
+            raise RuntimeError(f"branch event log failed for {new_tile_ids[0][:12]}: {e}") from e
+
+    def _emit_contradiction_detected_event(
+        self,
+        tile_a_id: str,
+        tile_b_id: str,
+        confidence: float,
+        resolution: str,
+        detected_by: str,
+        graph_tile_a_id: str,
+        graph_tile_b_id: str,
+    ) -> None:
+        try:
+            from .hmm.eventlog import EventLog
+        except ImportError:
+            from hmm.eventlog import EventLog
+
+        payload = {
+            "action": "mark_contested",
+            "correction_status": "contested",
+            "tile_a_id": tile_a_id,
+            "tile_b_id": tile_b_id,
+            "graph_tile_a_id": graph_tile_a_id,
+            "graph_tile_b_id": graph_tile_b_id,
+            "confidence": confidence,
+            "resolution": resolution,
+            "detected_by": detected_by,
+        }
+        payload["provenance_hash"] = self._transition_provenance_hash(
+            "CONTRADICTION_DETECTED",
+            "mark_contested",
+            payload,
+        )
+
+        try:
+            EventLog().emit(
+                "CONTRADICTION_DETECTED",
+                refs={
+                    "tile_a_id": tile_a_id,
+                    "tile_b_id": tile_b_id,
+                },
+                payload=payload,
+            )
+        except Exception as e:
+            raise RuntimeError(f"contradiction event log failed for {tile_a_id[:12]}: {e}") from e
+
     def mark_revised(
         self,
         old_tile_ids: List[str],
@@ -871,6 +972,8 @@ class ISMACore:
         new_tile_ids = list(dict.fromkeys(t for t in new_tile_ids if t))
         if not old_tile_ids or not new_tile_ids:
             raise ValueError("mark_revised requires at least one old tile and one new tile")
+        graph_old_ids = list(dict.fromkeys(t for t in (old_graph_ids or old_tile_ids) if t))
+        graph_new_ids = list(dict.fromkeys(t for t in (new_graph_ids or new_tile_ids) if t))
 
         old_props = {
             "correction_status": "revised",
@@ -887,6 +990,15 @@ class ISMACore:
             "is_superseded": False,
         }
 
+        self._emit_branch_created_event(
+            old_tile_ids,
+            new_tile_ids,
+            evidence,
+            graph_old_ids if write_graph else [],
+            graph_new_ids if write_graph else [],
+            write_graph,
+        )
+
         for tile_id in old_tile_ids:
             self._patch_isma_quantum_tile(tile_id, old_props, "revised-old")
         for tile_id in new_tile_ids:
@@ -900,8 +1012,6 @@ class ISMACore:
         except ImportError:
             from hmm.neo4j_store import HMMNeo4jStore
 
-        graph_old_ids = list(dict.fromkeys(t for t in (old_graph_ids or old_tile_ids) if t))
-        graph_new_ids = list(dict.fromkeys(t for t in (new_graph_ids or new_tile_ids) if t))
         if not graph_old_ids or not graph_new_ids:
             raise ValueError("mark_revised requires graph ids for the REVISES edge")
         store = HMMNeo4jStore()
@@ -931,6 +1041,18 @@ class ISMACore:
             "superseded_by": "",
             "invalidated_at": "",
         }
+        graph_a = graph_tile_a_id or tile_a_id
+        graph_b = graph_tile_b_id or tile_b_id
+        self._emit_contradiction_detected_event(
+            tile_a_id,
+            tile_b_id,
+            confidence,
+            resolution,
+            detected_by,
+            graph_a,
+            graph_b,
+        )
+
         self._patch_isma_quantum_tile(tile_a_id, props, "contested-a")
         self._patch_isma_quantum_tile(tile_b_id, props, "contested-b")
 
@@ -940,8 +1062,8 @@ class ISMACore:
             from hmm.neo4j_store import HMMNeo4jStore
 
         HMMNeo4jStore().mark_contradiction(
-            graph_tile_a_id or tile_a_id,
-            graph_tile_b_id or tile_b_id,
+            graph_a,
+            graph_b,
             confidence=confidence,
             resolution=resolution,
             detected_by=detected_by,

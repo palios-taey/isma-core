@@ -1,12 +1,15 @@
 import os
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("WEAVIATE_URL", "http://localhost:8080")
 os.environ.setdefault("EMBEDDING_URL", "http://localhost:8091/v1/embeddings")
 
 import isma.src.provenance_scorer as scorer
+from isma.src.hmm.eventlog import EventLog
 from isma.src.isma_core import ISMACore
 from isma.src.retrieval import TileResult
 
@@ -92,7 +95,7 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         with patch.object(ISMACore, "_patch_isma_quantum_tile", fake_patch), patch(
             "isma.src.hmm.neo4j_store.HMMNeo4jStore",
             return_value=store,
-        ):
+        ), patch("isma.src.hmm.eventlog.EventLog"):
             core.mark_revised(
                 ["old-v1"],
                 ["new-v1"],
@@ -119,6 +122,78 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
             "new-graph",
             evidence="operator accepted mind-change",
         )
+
+    def test_mark_revised_emits_branch_created_and_replay_reconstructs_receipt(self):
+        core = object.__new__(ISMACore)
+        store = Mock()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            event_log = EventLog(str(Path(tmpdir) / "events.jsonl"))
+
+            with patch.object(ISMACore, "_patch_isma_quantum_tile"), patch(
+                "isma.src.hmm.neo4j_store.HMMNeo4jStore",
+                return_value=store,
+            ), patch("isma.src.hmm.eventlog.EventLog", return_value=event_log):
+                core.mark_revised(
+                    ["old-v1"],
+                    ["new-v1"],
+                    evidence="operator accepted mind-change",
+                    old_graph_ids=["old-graph"],
+                    new_graph_ids=["new-graph"],
+                )
+
+            reconstructed = []
+            replayed = event_log.replay(reconstructed.append)
+
+        self.assertEqual(replayed, 1)
+        self.assertEqual(reconstructed[0].type, "BRANCH_CREATED")
+        self.assertEqual(reconstructed[0].refs["old_tile_id"], "old-v1")
+        self.assertEqual(reconstructed[0].refs["new_tile_id"], "new-v1")
+        self.assertEqual(reconstructed[0].payload["old_tile_ids"], ["old-v1"])
+        self.assertEqual(reconstructed[0].payload["new_tile_ids"], ["new-v1"])
+        self.assertEqual(reconstructed[0].payload["old_graph_ids"], ["old-graph"])
+        self.assertEqual(reconstructed[0].payload["new_graph_ids"], ["new-graph"])
+        self.assertEqual(reconstructed[0].payload["evidence"], "operator accepted mind-change")
+        self.assertEqual(reconstructed[0].payload["correction_status"], "revised")
+        self.assertIn("provenance_hash", reconstructed[0].payload)
+
+    def test_mark_contested_emits_contradiction_detected_and_replay_reconstructs_receipt(self):
+        core = object.__new__(ISMACore)
+        store = Mock()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            event_log = EventLog(str(Path(tmpdir) / "events.jsonl"))
+
+            with patch.object(ISMACore, "_patch_isma_quantum_tile"), patch(
+                "isma.src.hmm.neo4j_store.HMMNeo4jStore",
+                return_value=store,
+            ), patch("isma.src.hmm.eventlog.EventLog", return_value=event_log):
+                core.mark_contested(
+                    "tile-a",
+                    "tile-b",
+                    confidence=0.91,
+                    resolution="needs operator adjudication",
+                    detected_by="gate_b",
+                    graph_tile_a_id="graph-a",
+                    graph_tile_b_id="graph-b",
+                )
+
+            reconstructed = []
+            replayed = event_log.replay(reconstructed.append)
+
+        self.assertEqual(replayed, 1)
+        self.assertEqual(reconstructed[0].type, "CONTRADICTION_DETECTED")
+        self.assertEqual(reconstructed[0].refs["tile_a_id"], "tile-a")
+        self.assertEqual(reconstructed[0].refs["tile_b_id"], "tile-b")
+        self.assertEqual(reconstructed[0].payload["tile_a_id"], "tile-a")
+        self.assertEqual(reconstructed[0].payload["tile_b_id"], "tile-b")
+        self.assertEqual(reconstructed[0].payload["graph_tile_a_id"], "graph-a")
+        self.assertEqual(reconstructed[0].payload["graph_tile_b_id"], "graph-b")
+        self.assertEqual(reconstructed[0].payload["confidence"], 0.91)
+        self.assertEqual(reconstructed[0].payload["resolution"], "needs operator adjudication")
+        self.assertEqual(reconstructed[0].payload["detected_by"], "gate_b")
+        self.assertEqual(reconstructed[0].payload["correction_status"], "contested")
+        self.assertIn("provenance_hash", reconstructed[0].payload)
 
     def test_hard_supersede_without_refuter_is_rejected_fail_loud(self):
         core = object.__new__(ISMACore)
