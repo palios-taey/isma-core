@@ -1,4 +1,5 @@
 import os
+import json
 import unittest
 from unittest.mock import Mock, patch
 
@@ -118,6 +119,80 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
             "new-graph",
             evidence="operator accepted mind-change",
         )
+
+    def test_hard_supersede_without_refuter_is_rejected_fail_loud(self):
+        core = object.__new__(ISMACore)
+
+        with patch("isma.src.isma_core.requests.patch") as patch_request:
+            with self.assertRaisesRegex(ValueError, "hard supersede requires refuter"):
+                core._invalidate_superseded_tiles(
+                    ["old-v1"],
+                    "new-hash",
+                    "2026-07-04T00:00:00Z",
+                )
+
+        patch_request.assert_not_called()
+
+    def test_corrected_write_without_refuter_aborts_before_tile_write(self):
+        core = object.__new__(ISMACore)
+        event = Mock()
+        event.data = {
+            "content": "new claim",
+            "content_hash": "claim-hash",
+            "lineage_root": "claim-root",
+            "correction_status": "corrected",
+        }
+        event.event_type = "operator_assertion"
+
+        with patch("isma.src.isma_core.requests.post") as post_request:
+            with self.assertRaisesRegex(ValueError, "hard supersede requires refuter"):
+                core._embed_to_weaviate(event)
+
+        post_request.assert_not_called()
+
+    def test_hard_supersede_with_refuter_patches_and_logs_correction(self):
+        core = object.__new__(ISMACore)
+        response = Mock()
+        response.status_code = 204
+        event_log = Mock()
+        refuter = {
+            "who": "operator",
+            "source": "decision-record:abc",
+            "when": "2026-07-04T00:00:00Z",
+        }
+
+        with patch("isma.src.isma_core.requests.patch", return_value=response) as patch_request:
+            with patch("isma.src.hmm.eventlog.EventLog", return_value=event_log):
+                core._invalidate_superseded_tiles(
+                    ["old-v1"],
+                    "new-hash",
+                    "2026-07-04T00:00:00Z",
+                    refuter=refuter,
+                )
+
+        patch_body = patch_request.call_args.kwargs["json"]["properties"]
+        self.assertIs(patch_body["is_superseded"], True)
+        self.assertEqual(patch_body["correction_status"], "corrected")
+        self.assertEqual(patch_body["superseded_by"], "new-hash")
+        self.assertEqual(patch_body["invalidated_at"], "2026-07-04T00:00:00Z")
+
+        provenance = json.loads(patch_body["provenance_hash"])
+        self.assertEqual(provenance["event_type"], "CORRECTION")
+        self.assertEqual(provenance["action"], "hard_supersede")
+        self.assertEqual(provenance["old_tile_id"], "old-v1")
+        self.assertEqual(provenance["superseded_by"], "new-hash")
+        self.assertEqual(provenance["refuter"], refuter)
+
+        event_log.emit.assert_called_once()
+        event_type, = event_log.emit.call_args.args
+        self.assertEqual(event_type, "CORRECTION")
+        refs = event_log.emit.call_args.kwargs["refs"]
+        payload = event_log.emit.call_args.kwargs["payload"]
+        self.assertEqual(refs["old_tile_id"], "old-v1")
+        self.assertEqual(refs["superseded_by"], "new-hash")
+        self.assertEqual(payload["correction_status"], "corrected")
+        self.assertEqual(payload["refuter"], refuter)
+        self.assertEqual(payload["provenance_hash"], patch_body["provenance_hash"])
 
 
 if __name__ == "__main__":

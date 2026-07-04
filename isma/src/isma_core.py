@@ -741,15 +741,30 @@ class ISMACore:
         tile_ids: List[str],
         superseded_by: str,
         invalidated_at: str,
+        refuter: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Mark earlier tiles as invalidated before writing a newer version."""
         if not tile_ids:
             return
+        refuter = self._require_refuter(refuter)
 
         # FAIL-LOUD, FAIL-CLOSED: raise if any patch fails — a silent skip leaves a
         # zombie. Runs before the new-tile write, so the caller aborts cleanly.
         url = f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/objects/ISMA_Quantum"
         for tile_id in tile_ids:
+            provenance_hash = self._correction_provenance_hash(
+                tile_id,
+                superseded_by,
+                invalidated_at,
+                refuter,
+            )
+            self._emit_correction_event(
+                tile_id,
+                superseded_by,
+                invalidated_at,
+                refuter,
+                provenance_hash,
+            )
             try:
                 resp = requests.patch(
                     f"{url}/{tile_id}",
@@ -758,6 +773,8 @@ class ISMACore:
                             "superseded_by": superseded_by,
                             "invalidated_at": invalidated_at,
                             "is_superseded": True,
+                            "correction_status": "corrected",
+                            "provenance_hash": provenance_hash,
                         }
                     },
                     timeout=5,
@@ -769,6 +786,77 @@ class ISMACore:
                     f"supersede patch failed for {tile_id[:12]}: HTTP {resp.status_code} {resp.text[:160]}"
                 )
 
+    def _require_refuter(self, refuter: Optional[Dict[str, Any]]) -> Dict[str, str]:
+        if not isinstance(refuter, dict):
+            raise ValueError("hard supersede requires refuter with who, source, and when")
+
+        required_keys = ("who", "source", "when")
+        normalized = {
+            key: str(refuter.get(key) or "").strip()
+            for key in required_keys
+        }
+        missing = [key for key, value in normalized.items() if not value]
+        if missing:
+            raise ValueError(
+                f"hard supersede refuter missing required field(s): {', '.join(missing)}"
+            )
+
+        for key, value in refuter.items():
+            if key in normalized or value in (None, ""):
+                continue
+            normalized[str(key)] = str(value)
+        return normalized
+
+    def _correction_provenance_hash(
+        self,
+        tile_id: str,
+        superseded_by: str,
+        invalidated_at: str,
+        refuter: Dict[str, str],
+    ) -> str:
+        return json.dumps(
+            {
+                "event_type": "CORRECTION",
+                "action": "hard_supersede",
+                "old_tile_id": tile_id,
+                "superseded_by": superseded_by,
+                "timestamp": invalidated_at,
+                "refuter": refuter,
+            },
+            sort_keys=True,
+        )
+
+    def _emit_correction_event(
+        self,
+        tile_id: str,
+        superseded_by: str,
+        invalidated_at: str,
+        refuter: Dict[str, str],
+        provenance_hash: str,
+    ) -> None:
+        try:
+            from .hmm.eventlog import EventLog
+        except ImportError:
+            from hmm.eventlog import EventLog
+
+        try:
+            EventLog().emit(
+                "CORRECTION",
+                refs={
+                    "old_tile_id": tile_id,
+                    "superseded_by": superseded_by,
+                },
+                payload={
+                    "action": "hard_supersede",
+                    "correction_status": "corrected",
+                    "invalidated_at": invalidated_at,
+                    "refuter": refuter,
+                    "provenance_hash": provenance_hash,
+                },
+            )
+        except Exception as e:
+            raise RuntimeError(f"correction event log failed for {tile_id[:12]}: {e}") from e
+
     def mark_revised(
         self,
         old_tile_ids: List[str],
@@ -776,6 +864,7 @@ class ISMACore:
         evidence: str = "",
         old_graph_ids: Optional[List[str]] = None,
         new_graph_ids: Optional[List[str]] = None,
+        write_graph: bool = True,
     ) -> None:
         """Mark a mind-change revision without hiding the prior tile."""
         old_tile_ids = list(dict.fromkeys(t for t in old_tile_ids if t))
@@ -802,6 +891,9 @@ class ISMACore:
             self._patch_isma_quantum_tile(tile_id, old_props, "revised-old")
         for tile_id in new_tile_ids:
             self._patch_isma_quantum_tile(tile_id, new_props, "revised-new")
+
+        if not write_graph:
+            return
 
         try:
             from .hmm.neo4j_store import HMMNeo4jStore
@@ -866,6 +958,10 @@ class ISMACore:
             payload = event.data if isinstance(event.data, dict) else {}
             base_content_hash = str(payload.get("content_hash") or hashlib.sha256(content.encode("utf-8")).hexdigest()[:16])
             lineage_root = str(payload.get("lineage_root") or base_content_hash)
+            requested_correction_status = str(payload.get("correction_status") or "").strip().lower()
+            refuter_payload = payload.get("refuter")
+            hard_supersede_requested = requested_correction_status == "corrected" or refuter_payload is not None
+            refuter = self._require_refuter(refuter_payload) if hard_supersede_requested else None
             provenance_hash = json.dumps(
                 {
                     "source": payload.get("source") or event.event_type,
@@ -976,18 +1072,30 @@ class ISMACore:
             # both-visible state (old + new), surfaced fail-loud.
             prior_superseded_ids -= new_uuids
             if prior_superseded_ids and success_count > 0:
-                self._invalidate_superseded_tiles(
-                    sorted(prior_superseded_ids), base_content_hash, event.timestamp
-                )
+                if refuter:
+                    self._invalidate_superseded_tiles(
+                        sorted(prior_superseded_ids),
+                        base_content_hash,
+                        event.timestamp,
+                        refuter=refuter,
+                    )
+                else:
+                    self.mark_revised(
+                        sorted(prior_superseded_ids),
+                        sorted(new_uuids),
+                        evidence="shared lineage update without hard-supersede refuter",
+                        write_graph=False,
+                    )
 
             return success_count > 0
 
-        except RuntimeError:
-            # Fail-loud signal (bad tile write, or a supersede lookup/patch failure):
-            # propagate so consolidate_pending counts it as an error rather than
-            # swallowing it into a False that still marks the item 'processed'. Prior
-            # invalidation runs only AFTER all new tiles are durable, so a failure
-            # never leaves the old hidden with no replacement.
+        except (RuntimeError, ValueError):
+            # Fail-loud signal (bad tile write, invalid refuter, or supersede
+            # lookup/patch/log failure): propagate so consolidate_pending counts it
+            # as an error rather than swallowing it into a False that still marks
+            # the item 'processed'. Prior invalidation runs only AFTER all new
+            # tiles are durable, so a failure never leaves the old hidden with no
+            # replacement.
             raise
         except Exception as e:
             print(f"Weaviate embed warning: {e}")

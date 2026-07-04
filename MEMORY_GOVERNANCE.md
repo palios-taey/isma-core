@@ -42,10 +42,14 @@ Every durable item carries **time-bounded validity**:
 - `superseded_by` — the id of the replacing version (audit pointer; empty when current).
 - `invalidated_at` — when it stopped being valid.
 
-**Supersede-on-write:** writing a newer version of an item marks the prior version superseded
-(it is *not* duplicated and *not* hard-deleted). **Decay classes:** session/working items decay on
-context close; canonical items never decay; a superseded item is **excluded from retrieval**
-immediately.
+**Supersede-on-write:** writing a newer version of an item does not, by itself, prove the old
+version was wrong. Shared-lineage recency creates a revision branch (`correction_status=revised`)
+and keeps the prior visible but advisory. A hard supersede (`is_superseded=true`,
+`correction_status=corrected`) is allowed only when the write carries a refuter: who declared the
+old tile wrong, against what source, and when. The refuter is stamped into `provenance_hash` and
+recorded as a `CORRECTION` event before the old tile is hidden. **Decay classes:** session/working
+items decay on context close; canonical items never decay; a superseded item is **excluded from
+retrieval** immediately.
 
 **Eligibility rule:** only currently-valid items are retrieved. A superseded or invalidated item is
 **never delivered** into a working context — this is what prevents "zombie memory" (stale facts
@@ -93,7 +97,7 @@ The policy is enforced on the existing record schema and code paths — no new s
 |---|---|
 | Validity + provenance fields | **Both** tile-write paths (`isma_core._embed_to_weaviate` and the `/ingest/session` API) stamp: `is_superseded` (bool), `valid_from`, `superseded_by`, `invalidated_at`, `lineage_root`, `provenance_hash`. (`correction_status` / `promotion_state` are separate retrieval/enrichment fields read by the provenance scorer — they are **not** stamped by these write paths.) |
 | Revision / contest state | Explicit transition hooks (`ISMACore.mark_revised` and `ISMACore.mark_contested`) materialize `correction_status` on V1 `ISMA_Quantum` tiles without setting `is_superseded=true`. `mark_revised` keeps the prior visible, demotes it to sandbox/advisory, and writes a Neo4j `REVISES(new)->(old)` edge; `mark_contested` keeps both sides visible and writes the existing `CONTRADICTS` relation. |
-| Supersede-on-write | the ingest path marks prior matching versions `is_superseded=true` + stamps `provenance_hash` before committing the new item; the supersede step is **fail-loud / fail-closed** (a lookup/patch error aborts the write rather than silently leaving a zombie) |
+| Supersede-on-write | shared-lineage recency defaults to `mark_revised` and leaves prior tiles visible as advisory; hard supersede requires a `refuter={who, source, when}`, stamps that refuter into `provenance_hash`, emits a `CORRECTION` event, and only then sets `is_superseded=true`. Missing or incomplete refuter data raises before mutation; lookup/patch errors remain **fail-loud / fail-closed**. |
 | Eligibility filter (read) | the query filter excludes tiles where `is_superseded == true` by default (`{is_superseded NotEqual true}`, in both V1 `_build_where_filter` and V2 `_build_filter`); `include_superseded=true` opts out. Existing stores need the `is_superseded` property **present in the schema** AND a one-time `is_superseded=false` **backfill** on existing tiles to materialize the filter's index bucket — a populated store errors `"bucket for prop is_superseded not found"` until values are written (verified live; a fresh store auto-materializes on first write). Once materialized, `NotEqual true` also matches still-unflagged tiles (graceful). See `audit_logs/p4_production_evidence.md`. |
 | History / reconstruction | the temporal-chain and session-reconstruction paths **bypass** the eligibility filter to traverse superseded items |
 | Provenance scoring | retrieval scoring already reads `superseded_by` / `correction_status`; governance promotes this from a down-weight to an eligibility gate |
