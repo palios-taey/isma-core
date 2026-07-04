@@ -546,8 +546,15 @@ class ISMACore:
         for tile_id in list(dict.fromkeys(t for t in tile_ids if t)):
             props = self._read_isma_quantum_tile_properties(tile_id, operation)
             is_superseded = props.get("is_superseded") is True
+            superseded_by = str(props.get("superseded_by") or "").strip()
+            invalidated_at = str(props.get("invalidated_at") or "").strip()
             correction_status = str(props.get("correction_status") or "").strip().lower()
-            if is_superseded or correction_status == "corrected":
+            if (
+                is_superseded
+                or superseded_by
+                or invalidated_at
+                or correction_status == "corrected"
+            ):
                 raise ValueError(
                     f"{operation} refuses to clear supersede state for corrected/superseded "
                     f"tile {tile_id[:12]}"
@@ -796,13 +803,6 @@ class ISMACore:
                 invalidated_at,
                 refuter,
             )
-            self._emit_correction_event(
-                tile_id,
-                superseded_by,
-                invalidated_at,
-                refuter,
-                provenance_hash,
-            )
             try:
                 resp = requests.patch(
                     f"{url}/{tile_id}",
@@ -823,6 +823,13 @@ class ISMACore:
                 raise RuntimeError(
                     f"supersede patch failed for {tile_id[:12]}: HTTP {resp.status_code} {resp.text[:160]}"
                 )
+            self._emit_correction_event(
+                tile_id,
+                superseded_by,
+                invalidated_at,
+                refuter,
+                provenance_hash,
+            )
 
     def _require_refuter(
         self,
@@ -1043,21 +1050,20 @@ class ISMACore:
             "is_superseded": False,
         }
 
-        self._emit_branch_created_event(
-            old_tile_ids,
-            new_tile_ids,
-            evidence,
-            graph_old_ids if write_graph else [],
-            graph_new_ids if write_graph else [],
-            write_graph,
-        )
-
         for tile_id in old_tile_ids:
             self._patch_isma_quantum_tile(tile_id, old_props, "revised-old")
         for tile_id in new_tile_ids:
             self._patch_isma_quantum_tile(tile_id, new_props, "revised-new")
 
         if not write_graph:
+            self._emit_branch_created_event(
+                old_tile_ids,
+                new_tile_ids,
+                evidence,
+                [],
+                [],
+                write_graph,
+            )
             return
 
         try:
@@ -1070,7 +1076,20 @@ class ISMACore:
         store = HMMNeo4jStore()
         for new_id in graph_new_ids:
             for old_id in graph_old_ids:
-                store.mark_revised(old_id, new_id, evidence=evidence)
+                edge_created = store.mark_revised(old_id, new_id, evidence=evidence)
+                if edge_created is False:
+                    raise RuntimeError(
+                        f"REVISES edge not created for {new_id[:12]} -> {old_id[:12]}"
+                    )
+
+        self._emit_branch_created_event(
+            old_tile_ids,
+            new_tile_ids,
+            evidence,
+            graph_old_ids,
+            graph_new_ids,
+            write_graph,
+        )
 
     def mark_contested(
         self,
@@ -1101,15 +1120,6 @@ class ISMACore:
         }
         graph_a = graph_tile_a_id or tile_a_id
         graph_b = graph_tile_b_id or tile_b_id
-        self._emit_contradiction_detected_event(
-            tile_a_id,
-            tile_b_id,
-            confidence,
-            resolution,
-            detected_by,
-            graph_a,
-            graph_b,
-        )
 
         self._patch_isma_quantum_tile(tile_a_id, props, "contested-a")
         self._patch_isma_quantum_tile(tile_b_id, props, "contested-b")
@@ -1119,12 +1129,26 @@ class ISMACore:
         except ImportError:
             from hmm.neo4j_store import HMMNeo4jStore
 
-        HMMNeo4jStore().mark_contradiction(
+        edge_created = HMMNeo4jStore().mark_contradiction(
             graph_a,
             graph_b,
             confidence=confidence,
             resolution=resolution,
             detected_by=detected_by,
+        )
+        if edge_created is False:
+            raise RuntimeError(
+                f"CONTRADICTS edge not created for {graph_a[:12]} <-> {graph_b[:12]}"
+            )
+
+        self._emit_contradiction_detected_event(
+            tile_a_id,
+            tile_b_id,
+            confidence,
+            resolution,
+            detected_by,
+            graph_a,
+            graph_b,
         )
 
     def _embed_to_weaviate(self, event: Event) -> bool:

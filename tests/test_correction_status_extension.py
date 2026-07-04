@@ -287,6 +287,143 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         patch_tile.assert_not_called()
         event_log.emit.assert_not_called()
 
+    def test_mark_revised_refuses_legacy_superseded_by_before_unsupersede(self):
+        core = object.__new__(ISMACore)
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={
+                "is_superseded": False,
+                "correction_status": "current",
+                "superseded_by": "new-v2",
+                "invalidated_at": "",
+            },
+        ) as read_tile, patch.object(
+            ISMACore, "_patch_isma_quantum_tile"
+        ) as patch_tile, patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(ValueError, "refuses to clear supersede state"):
+                core.mark_revised(
+                    ["old-v1"],
+                    ["new-v1"],
+                    evidence="legacy superseded_by must stay corrected",
+                    old_graph_ids=["old-graph"],
+                    new_graph_ids=["new-graph"],
+                )
+
+        read_tile.assert_called_once_with("old-v1", "mark_revised")
+        patch_tile.assert_not_called()
+        event_log.emit.assert_not_called()
+
+    def test_mark_contested_refuses_legacy_invalidated_at_before_unsupersede(self):
+        core = object.__new__(ISMACore)
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={
+                "is_superseded": False,
+                "correction_status": "current",
+                "superseded_by": "",
+                "invalidated_at": "2026-07-04T00:00:00Z",
+            },
+        ) as read_tile, patch.object(
+            ISMACore, "_patch_isma_quantum_tile"
+        ) as patch_tile, patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(ValueError, "refuses to clear supersede state"):
+                core.mark_contested(
+                    "tile-a",
+                    "tile-b",
+                    confidence=0.91,
+                    detected_by="automation",
+                    graph_tile_a_id="graph-a",
+                    graph_tile_b_id="graph-b",
+                )
+
+        read_tile.assert_called_once_with("tile-a", "mark_contested")
+        patch_tile.assert_not_called()
+        event_log.emit.assert_not_called()
+
+    def test_mark_revised_graph_false_raises_without_receipt(self):
+        core = object.__new__(ISMACore)
+        store = Mock()
+        store.mark_revised.return_value = False
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={"is_superseded": False, "correction_status": "current"},
+        ), patch.object(ISMACore, "_patch_isma_quantum_tile") as patch_tile, patch(
+            "isma.src.hmm.neo4j_store.HMMNeo4jStore",
+            return_value=store,
+        ), patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "REVISES edge not created"):
+                core.mark_revised(
+                    ["old-v1"],
+                    ["new-v1"],
+                    evidence="graph mutation must be durable",
+                    old_graph_ids=["old-graph"],
+                    new_graph_ids=["new-graph"],
+                )
+
+        self.assertEqual(patch_tile.call_count, 2)
+        store.mark_revised.assert_called_once_with(
+            "old-graph",
+            "new-graph",
+            evidence="graph mutation must be durable",
+        )
+        event_log.emit.assert_not_called()
+
+    def test_mark_contested_graph_false_raises_without_receipt(self):
+        core = object.__new__(ISMACore)
+        store = Mock()
+        store.mark_contradiction.return_value = False
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={"is_superseded": False, "correction_status": "current"},
+        ), patch.object(ISMACore, "_patch_isma_quantum_tile") as patch_tile, patch(
+            "isma.src.hmm.neo4j_store.HMMNeo4jStore",
+            return_value=store,
+        ), patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "CONTRADICTS edge not created"):
+                core.mark_contested(
+                    "tile-a",
+                    "tile-b",
+                    confidence=0.91,
+                    resolution="needs adjudication",
+                    detected_by="automation",
+                    graph_tile_a_id="graph-a",
+                    graph_tile_b_id="graph-b",
+                )
+
+        self.assertEqual(patch_tile.call_count, 2)
+        store.mark_contradiction.assert_called_once_with(
+            "graph-a",
+            "graph-b",
+            confidence=0.91,
+            resolution="needs adjudication",
+            detected_by="automation",
+        )
+        event_log.emit.assert_not_called()
+
     def test_hard_supersede_without_refuter_is_rejected_fail_loud(self):
         core = object.__new__(ISMACore)
 
@@ -299,6 +436,86 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                 )
 
         patch_request.assert_not_called()
+
+    def test_hard_supersede_patch_failure_does_not_emit_correction_receipt(self):
+        core = object.__new__(ISMACore)
+        response = Mock()
+        response.status_code = 500
+        response.text = "write failed"
+        event_log = Mock()
+        refuter = {
+            "who": "operator",
+            "source": "decision-record:abc",
+            "when": "2026-07-04T00:00:00Z",
+        }
+
+        with patch("isma.src.isma_core.requests.patch", return_value=response):
+            with patch("isma.src.hmm.eventlog.EventLog", return_value=event_log):
+                with self.assertRaisesRegex(RuntimeError, "supersede patch failed"):
+                    core._invalidate_superseded_tiles(
+                        ["old-v1"],
+                        "new-hash",
+                        "2026-07-04T00:00:00Z",
+                        refuter=refuter,
+                        authenticated_actor="operator",
+                    )
+
+        event_log.emit.assert_not_called()
+
+    def test_mark_revised_patch_failure_does_not_emit_branch_receipt(self):
+        core = object.__new__(ISMACore)
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={"is_superseded": False, "correction_status": "current"},
+        ), patch.object(
+            ISMACore,
+            "_patch_isma_quantum_tile",
+            side_effect=RuntimeError("patch failed"),
+        ), patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "patch failed"):
+                core.mark_revised(
+                    ["old-v1"],
+                    ["new-v1"],
+                    evidence="patch failure must not be receipted",
+                    old_graph_ids=["old-graph"],
+                    new_graph_ids=["new-graph"],
+                )
+
+        event_log.emit.assert_not_called()
+
+    def test_mark_contested_patch_failure_does_not_emit_contradiction_receipt(self):
+        core = object.__new__(ISMACore)
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={"is_superseded": False, "correction_status": "current"},
+        ), patch.object(
+            ISMACore,
+            "_patch_isma_quantum_tile",
+            side_effect=RuntimeError("patch failed"),
+        ), patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "patch failed"):
+                core.mark_contested(
+                    "tile-a",
+                    "tile-b",
+                    confidence=0.91,
+                    detected_by="automation",
+                    graph_tile_a_id="graph-a",
+                    graph_tile_b_id="graph-b",
+                )
+
+        event_log.emit.assert_not_called()
 
     def test_corrected_write_without_refuter_aborts_before_tile_write(self):
         core = object.__new__(ISMACore)
