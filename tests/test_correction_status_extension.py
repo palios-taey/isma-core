@@ -3,13 +3,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, call, patch
 
 os.environ.setdefault("WEAVIATE_URL", "http://localhost:8080")
 os.environ.setdefault("EMBEDDING_URL", "http://localhost:8091/v1/embeddings")
 
 import isma.src.provenance_scorer as scorer
 from isma.src.hmm.eventlog import EventLog
+from isma.src.hmm.neo4j_store import HMMNeo4jStore
 from isma.src.isma_core import ISMACore
 from isma.src.retrieval import TileResult
 
@@ -86,13 +87,22 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
 
     def test_mark_revised_materializes_v1_without_superseding(self):
         core = object.__new__(ISMACore)
-        patches = []
+        calls = []
         store = Mock()
 
-        def fake_patch(_self, tile_id, properties, operation):
-            patches.append((tile_id, properties, operation))
+        def fake_read(_self, tile_id, operation):
+            calls.append(("read", tile_id, operation))
+            return {
+                "is_superseded": False,
+                "correction_status": "current",
+            }
 
-        with patch.object(ISMACore, "_patch_isma_quantum_tile", fake_patch), patch(
+        def fake_patch(_self, tile_id, properties, operation):
+            calls.append(("patch", tile_id, properties, operation))
+
+        with patch.object(ISMACore, "_read_isma_quantum_tile_properties", fake_read), patch.object(
+            ISMACore, "_patch_isma_quantum_tile", fake_patch
+        ), patch(
             "isma.src.hmm.neo4j_store.HMMNeo4jStore",
             return_value=store,
         ), patch("isma.src.hmm.eventlog.EventLog"):
@@ -104,18 +114,25 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                 new_graph_ids=["new-graph"],
             )
 
-        self.assertEqual(patches[0][0], "old-v1")
-        self.assertEqual(patches[0][1]["correction_status"], "revised")
-        self.assertEqual(patches[0][1]["memory_zone"], "sandbox")
-        self.assertEqual(patches[0][1]["authority"], "advisory")
-        self.assertIs(patches[0][1]["is_superseded"], False)
-        self.assertEqual(patches[0][1]["superseded_by"], "")
+        self.assertEqual(calls[0], ("read", "old-v1", "mark_revised"))
+        self.assertEqual(calls[1], ("read", "new-v1", "mark_revised"))
 
-        self.assertEqual(patches[1][0], "new-v1")
-        self.assertEqual(patches[1][1]["correction_status"], "current")
-        self.assertEqual(patches[1][1]["memory_zone"], "canon")
-        self.assertEqual(patches[1][1]["authority"], "binding")
-        self.assertIs(patches[1][1]["is_superseded"], False)
+        old_patch = calls[2]
+        self.assertEqual(old_patch[0], "patch")
+        self.assertEqual(old_patch[1], "old-v1")
+        self.assertEqual(old_patch[2]["correction_status"], "revised")
+        self.assertEqual(old_patch[2]["memory_zone"], "sandbox")
+        self.assertEqual(old_patch[2]["authority"], "advisory")
+        self.assertIs(old_patch[2]["is_superseded"], False)
+        self.assertEqual(old_patch[2]["superseded_by"], "")
+
+        new_patch = calls[3]
+        self.assertEqual(new_patch[0], "patch")
+        self.assertEqual(new_patch[1], "new-v1")
+        self.assertEqual(new_patch[2]["correction_status"], "current")
+        self.assertEqual(new_patch[2]["memory_zone"], "canon")
+        self.assertEqual(new_patch[2]["authority"], "binding")
+        self.assertIs(new_patch[2]["is_superseded"], False)
 
         store.mark_revised.assert_called_once_with(
             "old-graph",
@@ -130,7 +147,11 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             event_log = EventLog(str(Path(tmpdir) / "events.jsonl"))
 
-            with patch.object(ISMACore, "_patch_isma_quantum_tile"), patch(
+            with patch.object(
+                ISMACore,
+                "_read_isma_quantum_tile_properties",
+                return_value={"is_superseded": False, "correction_status": "current"},
+            ) as read_tile, patch.object(ISMACore, "_patch_isma_quantum_tile"), patch(
                 "isma.src.hmm.neo4j_store.HMMNeo4jStore",
                 return_value=store,
             ), patch("isma.src.hmm.eventlog.EventLog", return_value=event_log):
@@ -164,7 +185,11 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             event_log = EventLog(str(Path(tmpdir) / "events.jsonl"))
 
-            with patch.object(ISMACore, "_patch_isma_quantum_tile"), patch(
+            with patch.object(
+                ISMACore,
+                "_read_isma_quantum_tile_properties",
+                return_value={"is_superseded": False, "correction_status": "current"},
+            ) as read_tile, patch.object(ISMACore, "_patch_isma_quantum_tile"), patch(
                 "isma.src.hmm.neo4j_store.HMMNeo4jStore",
                 return_value=store,
             ), patch("isma.src.hmm.eventlog.EventLog", return_value=event_log):
@@ -178,6 +203,12 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                     graph_tile_b_id="graph-b",
                 )
 
+            read_tile.assert_has_calls(
+                [
+                    call("tile-a", "mark_contested"),
+                    call("tile-b", "mark_contested"),
+                ]
+            )
             reconstructed = []
             replayed = event_log.replay(reconstructed.append)
 
@@ -194,6 +225,67 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         self.assertEqual(reconstructed[0].payload["detected_by"], "gate_b")
         self.assertEqual(reconstructed[0].payload["correction_status"], "contested")
         self.assertIn("provenance_hash", reconstructed[0].payload)
+
+    def test_mark_revised_refuses_corrected_tile_before_unsupersede(self):
+        core = object.__new__(ISMACore)
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={
+                "is_superseded": True,
+                "correction_status": "corrected",
+            },
+        ) as read_tile, patch.object(
+            ISMACore, "_patch_isma_quantum_tile"
+        ) as patch_tile, patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(ValueError, "refuses to clear supersede state"):
+                core.mark_revised(
+                    ["old-v1"],
+                    ["new-v1"],
+                    evidence="weaker transition must not resurrect",
+                    old_graph_ids=["old-graph"],
+                    new_graph_ids=["new-graph"],
+                )
+
+        read_tile.assert_called_once_with("old-v1", "mark_revised")
+        patch_tile.assert_not_called()
+        event_log.emit.assert_not_called()
+
+    def test_mark_contested_refuses_corrected_tile_before_unsupersede(self):
+        core = object.__new__(ISMACore)
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={
+                "is_superseded": True,
+                "correction_status": "corrected",
+            },
+        ) as read_tile, patch.object(
+            ISMACore, "_patch_isma_quantum_tile"
+        ) as patch_tile, patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(ValueError, "refuses to clear supersede state"):
+                core.mark_contested(
+                    "tile-a",
+                    "tile-b",
+                    confidence=0.91,
+                    detected_by="automation",
+                    graph_tile_a_id="graph-a",
+                    graph_tile_b_id="graph-b",
+                )
+
+        read_tile.assert_called_once_with("tile-a", "mark_contested")
+        patch_tile.assert_not_called()
+        event_log.emit.assert_not_called()
 
     def test_hard_supersede_without_refuter_is_rejected_fail_loud(self):
         core = object.__new__(ISMACore)
@@ -243,6 +335,7 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                     "new-hash",
                     "2026-07-04T00:00:00Z",
                     refuter=refuter,
+                    authenticated_actor="operator",
                 )
 
         patch_body = patch_request.call_args.kwargs["json"]["properties"]
@@ -256,7 +349,10 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         self.assertEqual(provenance["action"], "hard_supersede")
         self.assertEqual(provenance["old_tile_id"], "old-v1")
         self.assertEqual(provenance["superseded_by"], "new-hash")
-        self.assertEqual(provenance["refuter"], refuter)
+        self.assertEqual(provenance["refuter"]["who"], refuter["who"])
+        self.assertEqual(provenance["refuter"]["source"], refuter["source"])
+        self.assertEqual(provenance["refuter"]["when"], refuter["when"])
+        self.assertEqual(provenance["refuter"]["authenticated_actor"], "operator")
 
         event_log.emit.assert_called_once()
         event_type, = event_log.emit.call_args.args
@@ -266,8 +362,67 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         self.assertEqual(refs["old_tile_id"], "old-v1")
         self.assertEqual(refs["superseded_by"], "new-hash")
         self.assertEqual(payload["correction_status"], "corrected")
-        self.assertEqual(payload["refuter"], refuter)
+        self.assertEqual(payload["refuter"], provenance["refuter"])
         self.assertEqual(payload["provenance_hash"], patch_body["provenance_hash"])
+
+    def test_hard_supersede_refuter_must_match_authenticated_actor(self):
+        core = object.__new__(ISMACore)
+        refuter = {
+            "who": "payload-declared-actor",
+            "source": "decision-record:abc",
+            "when": "2026-07-04T00:00:00Z",
+        }
+
+        with patch("isma.src.isma_core.requests.patch") as patch_request:
+            with self.assertRaisesRegex(ValueError, "must match authenticated actor"):
+                core._invalidate_superseded_tiles(
+                    ["old-v1"],
+                    "new-hash",
+                    "2026-07-04T00:00:00Z",
+                    refuter=refuter,
+                    authenticated_actor="authenticated-actor",
+                )
+
+        patch_request.assert_not_called()
+
+    def test_neo4j_mark_revised_missing_nodes_degrades_without_mutation(self):
+        store = object.__new__(HMMNeo4jStore)
+        session = Mock()
+        result = Mock()
+        result.single.return_value = {
+            "new_exists": False,
+            "old_exists": False,
+            "new_is_superseded": False,
+            "old_is_superseded": False,
+            "new_correction_status": "",
+            "old_correction_status": "",
+        }
+        session.run.return_value = result
+        store.driver = MagicMock()
+        store.driver.session.return_value.__enter__.return_value = session
+
+        self.assertIs(store.mark_revised("old-graph", "new-graph"), False)
+        self.assertEqual(session.run.call_count, 1)
+
+    def test_neo4j_mark_contradiction_missing_nodes_degrades(self):
+        store = object.__new__(HMMNeo4jStore)
+        session = Mock()
+        result = Mock()
+        result.single.return_value = {"contradicted": 0}
+        session.run.return_value = result
+        store.driver = MagicMock()
+        store.driver.session.return_value.__enter__.return_value = session
+
+        self.assertIs(
+            store.mark_contradiction(
+                "tile-a",
+                "tile-b",
+                confidence=0.5,
+                resolution="missing graph nodes",
+                detected_by="test",
+            ),
+            False,
+        )
 
 
 if __name__ == "__main__":

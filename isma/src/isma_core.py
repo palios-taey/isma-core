@@ -516,6 +516,43 @@ class ISMACore:
                 f"{response.status_code} {response.text[:160]}"
             )
 
+    def _read_isma_quantum_tile_properties(
+        self,
+        tile_id: str,
+        operation: str,
+    ) -> Dict[str, Any]:
+        if not tile_id:
+            raise ValueError(f"{operation} requires a tile id")
+        url = f"http://{WEAVIATE_HOST}:{WEAVIATE_PORT}/v1/objects/ISMA_Quantum/{tile_id}"
+        try:
+            response = requests.get(url, timeout=5)
+        except requests.RequestException as e:
+            raise RuntimeError(f"{operation} read unreachable for {tile_id[:12]}: {e}") from e
+        if response.status_code == 404:
+            raise RuntimeError(f"{operation} target missing for {tile_id[:12]}")
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"{operation} read failed for {tile_id[:12]}: HTTP "
+                f"{response.status_code} {response.text[:160]}"
+            )
+        data = response.json()
+        return data.get("properties") or {}
+
+    def _require_unsupersede_allowed(
+        self,
+        tile_ids: List[str],
+        operation: str,
+    ) -> None:
+        for tile_id in list(dict.fromkeys(t for t in tile_ids if t)):
+            props = self._read_isma_quantum_tile_properties(tile_id, operation)
+            is_superseded = props.get("is_superseded") is True
+            correction_status = str(props.get("correction_status") or "").strip().lower()
+            if is_superseded or correction_status == "corrected":
+                raise ValueError(
+                    f"{operation} refuses to clear supersede state for corrected/superseded "
+                    f"tile {tile_id[:12]}"
+                )
+
     def _get_embedding(self, text: str) -> Optional[List[float]]:
         """Get embedding with Redis cache (per Grok's optimization)."""
         try:
@@ -742,11 +779,12 @@ class ISMACore:
         superseded_by: str,
         invalidated_at: str,
         refuter: Optional[Dict[str, Any]] = None,
+        authenticated_actor: Optional[str] = None,
     ) -> None:
         """Mark earlier tiles as invalidated before writing a newer version."""
         if not tile_ids:
             return
-        refuter = self._require_refuter(refuter)
+        refuter = self._require_refuter(refuter, authenticated_actor)
 
         # FAIL-LOUD, FAIL-CLOSED: raise if any patch fails — a silent skip leaves a
         # zombie. Runs before the new-tile write, so the caller aborts cleanly.
@@ -786,9 +824,17 @@ class ISMACore:
                     f"supersede patch failed for {tile_id[:12]}: HTTP {resp.status_code} {resp.text[:160]}"
                 )
 
-    def _require_refuter(self, refuter: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    def _require_refuter(
+        self,
+        refuter: Optional[Dict[str, Any]],
+        authenticated_actor: Optional[str] = None,
+    ) -> Dict[str, str]:
         if not isinstance(refuter, dict):
             raise ValueError("hard supersede requires refuter with who, source, and when")
+
+        actor = str(authenticated_actor or "").strip()
+        if not actor:
+            raise ValueError("hard supersede requires an authenticated actor")
 
         required_keys = ("who", "source", "when")
         normalized = {
@@ -800,11 +846,14 @@ class ISMACore:
             raise ValueError(
                 f"hard supersede refuter missing required field(s): {', '.join(missing)}"
             )
+        if normalized["who"] != actor:
+            raise ValueError("hard supersede refuter who must match authenticated actor")
 
         for key, value in refuter.items():
             if key in normalized or value in (None, ""):
                 continue
             normalized[str(key)] = str(value)
+        normalized["authenticated_actor"] = actor
         return normalized
 
     def _correction_provenance_hash(
@@ -974,6 +1023,10 @@ class ISMACore:
             raise ValueError("mark_revised requires at least one old tile and one new tile")
         graph_old_ids = list(dict.fromkeys(t for t in (old_graph_ids or old_tile_ids) if t))
         graph_new_ids = list(dict.fromkeys(t for t in (new_graph_ids or new_tile_ids) if t))
+        self._require_unsupersede_allowed(
+            old_tile_ids + new_tile_ids,
+            "mark_revised",
+        )
 
         old_props = {
             "correction_status": "revised",
@@ -1035,6 +1088,11 @@ class ISMACore:
         if tile_a_id == tile_b_id:
             raise ValueError("mark_contested requires two distinct tile ids")
 
+        self._require_unsupersede_allowed(
+            [tile_a_id, tile_b_id],
+            "mark_contested",
+        )
+
         props = {
             "correction_status": "contested",
             "is_superseded": False,
@@ -1083,7 +1141,12 @@ class ISMACore:
             requested_correction_status = str(payload.get("correction_status") or "").strip().lower()
             refuter_payload = payload.get("refuter")
             hard_supersede_requested = requested_correction_status == "corrected" or refuter_payload is not None
-            refuter = self._require_refuter(refuter_payload) if hard_supersede_requested else None
+            authenticated_actor = str(getattr(event, "agent_id", "") or "").strip()
+            refuter = (
+                self._require_refuter(refuter_payload, authenticated_actor)
+                if hard_supersede_requested
+                else None
+            )
             provenance_hash = json.dumps(
                 {
                     "source": payload.get("source") or event.event_type,
@@ -1200,6 +1263,7 @@ class ISMACore:
                         base_content_hash,
                         event.timestamp,
                         refuter=refuter,
+                        authenticated_actor=authenticated_actor,
                     )
                 else:
                     self.mark_revised(
