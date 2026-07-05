@@ -378,7 +378,7 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                     new_graph_ids=["new-graph"],
                 )
 
-        self.assertEqual(patch_tile.call_count, 2)
+        patch_tile.assert_not_called()
         store.mark_revised.assert_called_once_with(
             "old-graph",
             "new-graph",
@@ -414,7 +414,7 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                     graph_tile_b_id="graph-b",
                 )
 
-        self.assertEqual(patch_tile.call_count, 2)
+        patch_tile.assert_not_called()
         store.mark_contradiction.assert_called_once_with(
             "graph-a",
             "graph-b",
@@ -422,6 +422,30 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
             resolution="needs adjudication",
             detected_by="automation",
         )
+        event_log.emit.assert_not_called()
+
+    def test_mark_revised_missing_graph_ids_aborts_before_patch(self):
+        core = object.__new__(ISMACore)
+        event_log = Mock()
+
+        with patch.object(
+            ISMACore,
+            "_read_isma_quantum_tile_properties",
+            return_value={"is_superseded": False, "correction_status": "current"},
+        ), patch.object(ISMACore, "_patch_isma_quantum_tile") as patch_tile, patch(
+            "isma.src.hmm.eventlog.EventLog",
+            return_value=event_log,
+        ):
+            with self.assertRaisesRegex(ValueError, "requires graph ids"):
+                core.mark_revised(
+                    ["old-v1"],
+                    ["new-v1"],
+                    evidence="graph ids must be valid before mutation",
+                    old_graph_ids=[""],
+                    new_graph_ids=["new-graph"],
+                )
+
+        patch_tile.assert_not_called()
         event_log.emit.assert_not_called()
 
     def test_hard_supersede_without_refuter_is_rejected_fail_loud(self):
@@ -433,6 +457,27 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                     ["old-v1"],
                     "new-hash",
                     "2026-07-04T00:00:00Z",
+                )
+
+        patch_request.assert_not_called()
+
+    def test_hard_supersede_refuter_rejects_extra_keys_before_patch(self):
+        core = object.__new__(ISMACore)
+        refuter = {
+            "who": "operator",
+            "source": "decision-record:abc",
+            "when": "2026-07-04T00:00:00Z",
+            "payload": "inject me into durable provenance",
+        }
+
+        with patch("isma.src.isma_core.requests.patch") as patch_request:
+            with self.assertRaisesRegex(ValueError, "unsupported field"):
+                core._invalidate_superseded_tiles(
+                    ["old-v1"],
+                    "new-hash",
+                    "2026-07-04T00:00:00Z",
+                    refuter=refuter,
+                    authenticated_actor="operator",
                 )
 
         patch_request.assert_not_called()
@@ -464,6 +509,7 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
 
     def test_mark_revised_patch_failure_does_not_emit_branch_receipt(self):
         core = object.__new__(ISMACore)
+        store = Mock()
         event_log = Mock()
 
         with patch.object(
@@ -477,6 +523,9 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         ), patch(
             "isma.src.hmm.eventlog.EventLog",
             return_value=event_log,
+        ), patch(
+            "isma.src.hmm.neo4j_store.HMMNeo4jStore",
+            return_value=store,
         ):
             with self.assertRaisesRegex(RuntimeError, "patch failed"):
                 core.mark_revised(
@@ -487,10 +536,16 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                     new_graph_ids=["new-graph"],
                 )
 
+        store.mark_revised.assert_called_once_with(
+            "old-graph",
+            "new-graph",
+            evidence="patch failure must not be receipted",
+        )
         event_log.emit.assert_not_called()
 
     def test_mark_contested_patch_failure_does_not_emit_contradiction_receipt(self):
         core = object.__new__(ISMACore)
+        store = Mock()
         event_log = Mock()
 
         with patch.object(
@@ -504,6 +559,9 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         ), patch(
             "isma.src.hmm.eventlog.EventLog",
             return_value=event_log,
+        ), patch(
+            "isma.src.hmm.neo4j_store.HMMNeo4jStore",
+            return_value=store,
         ):
             with self.assertRaisesRegex(RuntimeError, "patch failed"):
                 core.mark_contested(
@@ -515,6 +573,13 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
                     graph_tile_b_id="graph-b",
                 )
 
+        store.mark_contradiction.assert_called_once_with(
+            "graph-a",
+            "graph-b",
+            confidence=0.91,
+            resolution="",
+            detected_by="automation",
+        )
         event_log.emit.assert_not_called()
 
     def test_corrected_write_without_refuter_aborts_before_tile_write(self):
@@ -569,7 +634,7 @@ class CorrectionStatusExtensionTest(unittest.TestCase):
         self.assertEqual(provenance["refuter"]["who"], refuter["who"])
         self.assertEqual(provenance["refuter"]["source"], refuter["source"])
         self.assertEqual(provenance["refuter"]["when"], refuter["when"])
-        self.assertEqual(provenance["refuter"]["authenticated_actor"], "operator")
+        self.assertEqual(set(provenance["refuter"]), {"who", "source", "when"})
 
         event_log.emit.assert_called_once()
         event_type, = event_log.emit.call_args.args

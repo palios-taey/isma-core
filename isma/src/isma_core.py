@@ -844,6 +844,13 @@ class ISMACore:
             raise ValueError("hard supersede requires an authenticated actor")
 
         required_keys = ("who", "source", "when")
+        allowed_keys = frozenset(required_keys)
+        extra_keys = sorted(str(key) for key in refuter if key not in allowed_keys)
+        if extra_keys:
+            raise ValueError(
+                f"hard supersede refuter has unsupported field(s): {', '.join(extra_keys)}"
+            )
+
         normalized = {
             key: str(refuter.get(key) or "").strip()
             for key in required_keys
@@ -853,14 +860,11 @@ class ISMACore:
             raise ValueError(
                 f"hard supersede refuter missing required field(s): {', '.join(missing)}"
             )
+        # Single-operator trust boundary: the caller-supplied event actor is the
+        # identity signal here, not independent external authentication.
         if normalized["who"] != actor:
             raise ValueError("hard supersede refuter who must match authenticated actor")
 
-        for key, value in refuter.items():
-            if key in normalized or value in (None, ""):
-                continue
-            normalized[str(key)] = str(value)
-        normalized["authenticated_actor"] = actor
         return normalized
 
     def _correction_provenance_hash(
@@ -1035,6 +1039,23 @@ class ISMACore:
             "mark_revised",
         )
 
+        if write_graph:
+            if not graph_old_ids or not graph_new_ids:
+                raise ValueError("mark_revised requires graph ids for the REVISES edge")
+            try:
+                from .hmm.neo4j_store import HMMNeo4jStore
+            except ImportError:
+                from hmm.neo4j_store import HMMNeo4jStore
+
+            store = HMMNeo4jStore()
+            for new_id in graph_new_ids:
+                for old_id in graph_old_ids:
+                    edge_created = store.mark_revised(old_id, new_id, evidence=evidence)
+                    if edge_created is False:
+                        raise RuntimeError(
+                            f"REVISES edge not created for {new_id[:12]} -> {old_id[:12]}"
+                        )
+
         old_props = {
             "correction_status": "revised",
             "memory_zone": "sandbox",
@@ -1066,22 +1087,6 @@ class ISMACore:
             )
             return
 
-        try:
-            from .hmm.neo4j_store import HMMNeo4jStore
-        except ImportError:
-            from hmm.neo4j_store import HMMNeo4jStore
-
-        if not graph_old_ids or not graph_new_ids:
-            raise ValueError("mark_revised requires graph ids for the REVISES edge")
-        store = HMMNeo4jStore()
-        for new_id in graph_new_ids:
-            for old_id in graph_old_ids:
-                edge_created = store.mark_revised(old_id, new_id, evidence=evidence)
-                if edge_created is False:
-                    raise RuntimeError(
-                        f"REVISES edge not created for {new_id[:12]} -> {old_id[:12]}"
-                    )
-
         self._emit_branch_created_event(
             old_tile_ids,
             new_tile_ids,
@@ -1112,17 +1117,8 @@ class ISMACore:
             "mark_contested",
         )
 
-        props = {
-            "correction_status": "contested",
-            "is_superseded": False,
-            "superseded_by": "",
-            "invalidated_at": "",
-        }
         graph_a = graph_tile_a_id or tile_a_id
         graph_b = graph_tile_b_id or tile_b_id
-
-        self._patch_isma_quantum_tile(tile_a_id, props, "contested-a")
-        self._patch_isma_quantum_tile(tile_b_id, props, "contested-b")
 
         try:
             from .hmm.neo4j_store import HMMNeo4jStore
@@ -1140,6 +1136,15 @@ class ISMACore:
             raise RuntimeError(
                 f"CONTRADICTS edge not created for {graph_a[:12]} <-> {graph_b[:12]}"
             )
+
+        props = {
+            "correction_status": "contested",
+            "is_superseded": False,
+            "superseded_by": "",
+            "invalidated_at": "",
+        }
+        self._patch_isma_quantum_tile(tile_a_id, props, "contested-a")
+        self._patch_isma_quantum_tile(tile_b_id, props, "contested-b")
 
         self._emit_contradiction_detected_event(
             tile_a_id,
