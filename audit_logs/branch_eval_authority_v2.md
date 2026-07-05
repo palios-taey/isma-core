@@ -4,7 +4,7 @@ Task: `isma-authority-v2::branch-eval`
 Branch under eval: `agent/codex-correction-status-extension`
 Code under eval: `a1723ef feat: log correction transition receipts`
 Run timestamp: 2026-07-04T03:46:38Z
-Weaviate endpoint: `http://127.0.0.1:8088`
+Weaviate endpoint: configured local eval endpoint
 Live class: `ISMA_Quantum`
 
 ## Scope
@@ -137,7 +137,7 @@ cleanup and after the passing run cleanup.
 ## Three-register
 
 Observed:
-- The live `ISMA_Quantum` class was reachable at `127.0.0.1:8088` and contained 1,563,977 objects
+- The live `ISMA_Quantum` class was reachable at the configured local eval endpoint and contained 1,563,977 objects
   before the eval.
 - The eval wrote and deleted 10 throwaway V1 objects with exact cleanup.
 - Mind-change, refuter correction, recency-only, and contested transitions produced the measured V1

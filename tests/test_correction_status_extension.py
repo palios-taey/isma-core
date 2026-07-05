@@ -1,12 +1,8 @@
-import os
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
-
-os.environ.setdefault("WEAVIATE_URL", "http://localhost:8080")
-os.environ.setdefault("EMBEDDING_URL", "http://localhost:8091/v1/embeddings")
 
 import isma.src.provenance_scorer as scorer
 from isma.src.hmm.eventlog import EventLog
