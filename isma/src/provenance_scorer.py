@@ -206,6 +206,20 @@ PP_SOURCE_TYPE = 0.12
 PP_LINEAGE = 0.10
 PP_PROMOTION = 0.10
 
+CORRECTION_STATUS_CORRECTED = "corrected"
+CORRECTION_STATUS_CORRECTOR = "corrector"
+CORRECTION_STATUS_CURRENT = "current"
+CORRECTION_STATUS_REVISED = "revised"
+CORRECTION_STATUS_CONTESTED = "contested"
+
+CORRECTION_OBEDIENCE_SCORES = {
+    CORRECTION_STATUS_CORRECTED: 0.0,
+    CORRECTION_STATUS_CORRECTOR: 1.0,
+    CORRECTION_STATUS_CURRENT: 0.9,
+    CORRECTION_STATUS_REVISED: 0.65,
+    CORRECTION_STATUS_CONTESTED: 0.6,
+}
+
 
 # ============================================================================
 # Provenance Prior
@@ -270,17 +284,12 @@ def correction_obedience(tile) -> float:
     If tile is superseded, it should rank lower.
     If tile is the corrector, it should rank higher.
     """
-    correction_status = getattr(tile, "correction_status", None)
+    correction_status = (getattr(tile, "correction_status", None) or "").lower()
     superseded_by = getattr(tile, "superseded_by", None)
 
-    if correction_status == "corrected" or superseded_by:
-        return 0.0  # This tile has been superseded
-    elif correction_status == "corrector":
-        return 1.0  # This tile IS the correction
-    elif correction_status == "current":
-        return 0.9  # Explicitly marked current
-    else:
-        return 0.5  # Unknown — neutral
+    if superseded_by:
+        return 0.0
+    return CORRECTION_OBEDIENCE_SCORES.get(correction_status, 0.5)
 
 
 # ============================================================================
@@ -576,7 +585,7 @@ def apply_provenance_scoring(
 
         # Component scores — each function returns [0, 1]
         pp = provenance_prior(tile, query_mode)       # [0, 1] clamped
-        co = correction_obedience(tile)                # {0.0, 0.5, 0.9, 1.0}
+        co = correction_obedience(tile)                # {0.0, 0.5, 0.6, 0.65, 0.9, 1.0}
         si = source_independence(tile, source_counts)  # [0, 1] via 1/sqrt(n)
         gs = graph_scores.get(getattr(tile, "content_hash", ""), 0.0)  # [0, 1] normalized
         tf = compute_temporal_freshness(tile, query_type)  # [0, 1] decay
