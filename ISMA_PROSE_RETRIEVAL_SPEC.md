@@ -6,6 +6,19 @@
 
 ---
 
+## RULE 0 — USE `isma-query`; do NOT hand-roll the raw `/search` curl. (Critical: a wrong-key parse silently discards real data and reads as "ISMA is down" when it is fine.)
+
+The interface is the **`isma-query` CLI** (or MCP `isma_search`) — it wraps `/search` with the correct payload AND the correct response parsing. Hand-rolling `curl :8095/search` is a footgun with two specific traps:
+- The response puts hits in the **`tiles`** key (inside `{context_frame, query, total_tokens, search_time_ms, count, tiles}`) — NOT `results`/`hits`. A `d.get("results")` parse returns empty.
+- The request takes **`scale`** (`full_4096` / `search_512`), NOT `alpha`.
+A hand-rolled `curl -d '{"query":..,"alpha":..}'` + wrong-key parse returns EMPTY even though the endpoint returned real data → it reads as "ISMA returned nothing / is down" when the system is UP and working. (2026-07-05 incident: a fleet session did exactly this, discarded working data, and declared the production memory system broken. It was fine.)
+
+**A silent-empty ISMA result is an EMERGENCY to diagnose, not a shrug** — memory retrieval is load-bearing. If `isma-query` itself truly fails, confirm with `curl -s http://localhost:8095/health` and escalate to **weaver** (owns ISMA / this spec / the Weaviate `:8088`). The raw-curl forms shown later in this doc are the on-the-wire CONTRACT for building a wrapper — they are NOT the way to query day-to-day; use `isma-query`.
+
+See the companion skill `~/.claude/skills/isma-search/SKILL.md`.
+
+---
+
 ## RULE 1 — NO HMM. (Critical: HMM gating silently hides the new prose.)
 
 The newly-ingested prose carries `hmm_enriched=false`. Any HMM-gated path EXCLUDES it.
