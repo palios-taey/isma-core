@@ -147,12 +147,75 @@ def insert_objects(objs: list) -> int:
                          json=payload, timeout=60)
         r.raise_for_status()
         results = r.json()
-        ok = sum(1 for x in results
-                 if (x.get("result", {}).get("status") or "SUCCESS") == "SUCCESS")
+        # Count ONLY explicit SUCCESS. A missing/failed per-object status is a
+        # FAILURE, and its error is surfaced — a read-only store (e.g. Weaviate
+        # DISKGATE at 90% disk) returns HTTP 200 with per-object
+        # status=FAILED; the old `or "SUCCESS"` default miscounted that as
+        # inserted, reporting success while zero tiles persisted.
+        ok = 0
+        for x in results:
+            res = x.get("result", {}) or {}
+            if res.get("status") == "SUCCESS":
+                ok += 1
+            else:
+                log.error(f"  object insert FAILED: status={res.get('status')!r} "
+                          f"errors={res.get('errors')}")
         return ok
     except Exception as e:
         log.error(f"batch insert failed: {e}")
         return 0
+
+
+def supersede_prior_versions(source_file: str, new_doc_hash: str) -> int:
+    """Mark tiles of PRIOR versions of this source_file as superseded.
+
+    Re-ingesting a changed file previously left the old version's tiles
+    co-current with the new ones — the stale text could outrank the
+    correction (observed live 2026-07-23: a corrected identity doc's old
+    version stayed the top hit). The file on disk is canonical for
+    document-type ingests, so an older snapshot of the same source_file is
+    superseded by definition (version-supersession, not opinion-correction —
+    mirrors the memory-governance supersede-on-write semantics).
+
+    Scoped strictly: only tiles whose source_file matches exactly AND whose
+    doc_hash differs from the new ingest AND not already superseded.
+    Fail-loud: PATCH errors are logged per-object, never swallowed silently.
+    Returns the number of tiles marked.
+    """
+    gql = {
+        "query": '''{ Get { ISMA_Quantum(limit: 500, where: {operator: And, operands: [
+            {path: ["source_file"], operator: Equal, valueText: "%s"},
+            {path: ["is_superseded"], operator: NotEqual, valueBoolean: true}
+        ]}) { doc_hash _additional { id } } } }''' % source_file.replace('"', '')
+    }
+    try:
+        r = session.post(f"{WEAVIATE_URL}/v1/graphql", json=gql, timeout=30)
+        r.raise_for_status()
+        tiles = (r.json().get("data", {}).get("Get", {})
+                 .get("ISMA_Quantum", []) or [])
+    except Exception as e:
+        log.error(f"supersede query failed for {source_file}: {e}")
+        return 0
+    stale = [t for t in tiles
+             if t.get("doc_hash") and t["doc_hash"] != new_doc_hash]
+    marked = 0
+    for t in stale:
+        oid = t["_additional"]["id"]
+        try:
+            pr = session.patch(
+                f"{WEAVIATE_URL}/v1/objects/ISMA_Quantum/{oid}",
+                json={"class": "ISMA_Quantum", "properties": {
+                    "is_superseded": True,
+                    "superseded_by": new_doc_hash[:12],
+                }}, timeout=15)
+            pr.raise_for_status()
+            marked += 1
+        except Exception as e:
+            log.error(f"  supersede PATCH failed for {oid}: {e}")
+    if stale:
+        log.info(f"  superseded {marked}/{len(stale)} prior-version tiles "
+                 f"(old doc versions of {source_file})")
+    return marked
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
@@ -241,6 +304,12 @@ def ingest_file(path: Path) -> bool:
     log.info(f"  inserting {len(objs)} objects to Weaviate")
     ok = insert_objects(objs)
     log.info(f"  inserted {ok}/{len(objs)}")
+    if ok == len(objs):
+        # New version fully persisted -> retire any prior versions of this
+        # file so the stale snapshot cannot outrank the current one.
+        # Only after a COMPLETE insert: a partial insert must not orphan
+        # the old version (better co-current than amnesia).
+        supersede_prior_versions(str(path), doc_hash)
     return ok == len(objs)
 
 
