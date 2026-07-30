@@ -1,0 +1,67 @@
+# gitleaks configuration for isma-core
+#
+# Calibrated to the production-public bar. The gate's job is exactly:
+#   NO secrets. NO private information. NO training data.
+# It is explicitly NOT the gate's job to flag operator file paths.
+#
+# Why that matters: sharing directory structure is fine, and a gate that
+# flags `/home/<user>/...` trains contributors to rewrite honest paths in
+# order to satisfy it. That is churn, and it hides the real signal — the
+# secret sitting two lines below the path nobody reads any more.
+
+title = "isma-core secret scan"
+
+# Start from the maintained upstream ruleset, then narrow below.
+[extend]
+useDefault = true
+
+[allowlist]
+description = """
+Operator file paths are ALLOWED by policy, not by oversight. Private IPs must
+be env-configurable in code (enforced separately by review), so a documented
+example host in a template is not a leak.
+"""
+
+paths = [
+  # Committed templates exist to SHOW the shape of a config value.
+  '''\.env\.example$''',
+  # Generated docs + fixtures reproduce values that already live in the repo.
+  '''^docs/taey/ISMA_SCHEMA_REFERENCE\.md$''',
+  # Lockfiles and vendored deps carry upstream hashes, not our secrets.
+  '''(^|/)(package-lock\.json|poetry\.lock|requirements\.txt)$''',
+]
+
+regexes = [
+  # Operator home paths — allowed by the mandate. NOT a leak.
+  '''/home/[a-z_][a-z0-9_-]*/''',
+  # Loopback and documented example endpoints.
+  '''https?://(localhost|127\.0\.0\.1)(:\d+)?''',
+  # Placeholder values in templates and docs.
+  '''(?i)(your[-_]?(api[-_]?key|token|password)|<[a-z-]+>|xxx+|changeme|example\.com)''',
+]
+
+# ── Additional rules beyond the default set ────────────────────────────────
+# The default ruleset covers cloud/provider credentials well. These cover the
+# two mandate categories it does NOT: private network topology, and the
+# credential shapes this fleet actually uses.
+
+[[rules]]
+id = "private-network-address"
+description = "Hardcoded private network address — hosts must be env-configurable"
+regex = '''\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3})\b'''
+tags = ["network", "private-info"]
+[rules.allowlist]
+description = "Templates and docs may show an example host; code may not."
+paths = ['''\.env\.example$''', '''(^|/)README\.md$''', '''(^|/)CHANGELOG\.md$''']
+
+[[rules]]
+id = "neo4j-bolt-credentials"
+description = "Neo4j bolt URI with inline credentials"
+regex = '''bolt(\+s)?://[^:\s/]+:[^@\s]+@'''
+tags = ["credentials"]
+
+[[rules]]
+id = "presigned-url-token"
+description = "Presigned URL carrying a live access token"
+regex = '''(?i)[?&](X-Amz-Signature|X-Amz-Credential|Signature|AWSAccessKeyId)=[A-Za-z0-9%/+_-]{16,}'''
+tags = ["credentials", "cloud"]
