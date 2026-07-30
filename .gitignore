@@ -33,3 +33,6 @@ benchmarks/*_results*.json
 sidebyside*.md
 calibration_*.md
 .claude/
+
+# generated runtime state (regenerable by isma/scripts/backfill_md_corpus.py) — never commit
+isma/reports/md_corpus_manifest.json
