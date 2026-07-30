@@ -140,6 +140,7 @@ class SearchRequest(BaseModel):
     source_type: Optional[str] = None
     source_file: Optional[str] = None
     ingest_pipeline: Optional[str] = None
+    authority: Optional[str] = None
     scale: Optional[str] = None
     session_id: Optional[str] = None
     document_id: Optional[str] = None
@@ -187,6 +188,8 @@ class BM25Request(BaseModel):
     include_superseded: Optional[bool] = False
     platform: Optional[str] = None
     source_type: Optional[str] = None
+    source_file: Optional[str] = None
+    authority: Optional[str] = None
 
 
 class HMMStoreRequest(BaseModel):
@@ -246,7 +249,7 @@ def search(req: SearchRequest):
     r = get_retrieval()
     filters = {}
     for field_name in ["platform", "source_type", "source_file",
-                       "ingest_pipeline", "scale", "session_id",
+                       "ingest_pipeline", "authority", "scale", "session_id",
                        "document_id", "has_artifacts", "has_thinking",
                        "layer", "min_priority", "model", "dominant_motifs",
                        "hmm_enriched", "min_hmm_phi", "min_hmm_trust",
@@ -331,6 +334,10 @@ def search_bm25(req: BM25Request):
         filters["platform"] = req.platform
     if req.source_type:
         filters["source_type"] = req.source_type
+    if req.source_file:
+        filters["source_file"] = req.source_file
+    if req.authority:
+        filters["authority"] = req.authority
 
     result = r.search_bm25(
         query=req.query,
