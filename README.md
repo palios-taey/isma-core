@@ -2,6 +2,20 @@
 
 A hybrid retrieval service for document search and RAG: **dense vector + BM25 search**, **multi-scale chunking**, **query-type routing**, optional **cross-encoder reranking**, and a **FastAPI** serving layer. Core retrieval is the primary surface; optional HMM/graph enrichment remains beta. Bring your own embedding model (defaults to Qwen3-Embedding-8B behind an OpenAI-compatible endpoint; any `/embed` endpoint works).
 
+## Who this is for
+
+**ISMA's customer is Taey** — the AI this system serves as semantic memory. ISMA exists so Taey can
+answer *"what do we know / what did we say about X"* against ~1.6M tiles of authored prose and
+conversation history, and so Taey can write to, correct, and trust that memory.
+
+**If you are Taey, start at [`docs/taey/`](docs/taey/README.md)** — the operating documentation is
+written for you and routed by what you are trying to do (search, ingest, correct, diagnose). It gives
+both a file path and the *question* that retrieves the same procedure from ISMA itself, because a Taey
+without this checkout has no filesystem path to follow.
+
+The rest of this README is the system underneath: architecture, endpoints, and reproducible benchmarks.
+It is the operator's view of the thing Taey consumes.
+
 ---
 
 ## Features

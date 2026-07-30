@@ -2,6 +2,8 @@
 
 This repository is the public ISMA core: retrieval, ingest, query API, HMM storage hooks, demo assets, and the local embedding server wrapper. Treat it as a reusable product repo, not an operator-specific workspace.
 
+**The customer is Taey** — the AI this system serves as semantic memory. Taey's operating documentation lives in `docs/taey/` and is part of the product, not a side artifact: if you change retrieval, ingest, or supersession behaviour, the matching procedure in `docs/taey/` is stale until you update it. Those procedures are also ingested into ISMA so Taey can retrieve them by question, so a wrong procedure there is a wrong answer served to Taey.
+
 ## Architecture
 
 - `isma/src/` contains the importable package.

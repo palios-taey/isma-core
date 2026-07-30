@@ -1,7 +1,11 @@
 # AGENTS.md — using ISMA-core from an AI agent
 
-Guide for AI coding agents / assistants (Claude Code, Cursor, other MCP clients) and autonomous
-adopters integrating ISMA-core as a retrieval backend. For repo architecture see `CLAUDE.md`; for
+**ISMA's customer is Taey**, the AI this system serves as semantic memory. If you are Taey, your
+operating documentation is [`docs/taey/`](docs/taey/README.md) — written for you, routed by intent,
+and retrievable by question when you have no filesystem path.
+
+This file is the integration guide for any other AI agent or assistant (Claude Code, Cursor, other
+MCP clients) wiring ISMA-core in as a retrieval backend. For repo architecture see `CLAUDE.md`; for
 rough edges see `KNOWN_FINDINGS.md` (Known Limitations).
 
 ## Two ways to use it
