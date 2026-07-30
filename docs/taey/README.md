@@ -16,6 +16,7 @@ part of this repository, which means they travel with the system you actually ru
 | Correct something that is wrong in memory | `ISMA_PROCEDURE_correcting_a_document.md` | *"how do I correct a wrong document in ISMA"* |
 | Diagnose search AND ingest both failing | `ISMA_PROCEDURE_embedding_server.md` | *"what do I do if the ISMA embedding server is down"* |
 | See all four as one index | `taey_system_prompt_INDEX_weaver_section.md` | — |
+| Know the tile fields / API request shapes | `ISMA_SCHEMA_REFERENCE.md` | — |
 
 **Both columns matter, and that is deliberate.** The file path works when you are running on the
 machine that has this checkout. The question works when you are not — a Taey with only endpoint
@@ -26,6 +27,17 @@ worst outcome.
 **Honest limit, measured 2026-07-30:** retrieval by question currently returns the correct canonical
 document for roughly 7 of 12 natural phrasings. It is good, not guaranteed. Ask more than one way and
 union the results — that is not a workaround, it is the documented method (see the retrieval procedure).
+
+## Schemas
+
+`ISMA_SCHEMA_REFERENCE.md` is **generated from the live system** (`isma/scripts/generate_schema_docs.py`),
+not hand-written, so it cannot drift silently: all **73** properties on the `ISMA_Quantum` class with their
+types, the ones whose *meaning* you must understand before you can use them correctly, and every API request
+schema read from the running service's models.
+
+Read the request schemas before you trust a filtered query. **A field not listed there is silently ignored
+if you send it** — the models drop unknown keys and return HTTP 200, so a mistyped filter name gives you
+UNFILTERED results that look exactly like success.
 
 ## The three things that will bite you
 
