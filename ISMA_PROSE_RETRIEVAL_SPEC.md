@@ -23,8 +23,10 @@ See the companion skill `~/.claude/skills/isma-search/SKILL.md`.
 
 The newly-ingested prose carries `hmm_enriched=false`. Any HMM-gated path EXCLUDES it.
 
-- ✅ USE: **`/search`** (V1, plain hybrid BM25+vector over the full `ISMA_Quantum` corpus — this is where the prose lives). `/v2/search` and `/v2/search/adaptive` are also non-HMM but query `ISMA_Quantum_v2`, a partial-migration shadow class (~5% of tiles) that does **not** contain the authored-prose corpus — prefer `/search`.
-- ✅ MCP: `isma_search` (queries V1 — use this). `isma_adaptive_search` routes to the V2 shadow; prefer `isma_search`. Either way keep **`enriched_only=false`** (the default — just don't set it true).
+- ✅ USE: **`/search`** (V1, plain hybrid BM25+vector over the full `ISMA_Quantum` corpus — this is where the prose lives).
+- ❌ NEVER: **`/v2/search`** and **`/v2/search/semantic`** — these query `ISMA_Quantum_v2` alone, a frozen partial-migration shadow (73,809 tiles = **4.59%** of the corpus). Measured 2026-07-30 on one query: `/search` **0.650** vs `/v2/search` **0.056**, and the v2 hits were raw transcript blobs. They answer HTTP 200 with plausible-looking tiles, so nothing signals the degradation.
+- ✅ SUPPORTED: **`/v2/search/adaptive`** (and MCP `isma_adaptive_search`). **CORRECTED 2026-07-30 — earlier revisions of this file said adaptive routed to the shadow. That was WRONG.** Adaptive is **V1-based with a V2 overlay**: its implementation states *"All non-relational strategies use V1 hybrid_retrieve_hmm as the base"*, imports V1 `get_retrieval`, and sets `V1_CLASS = ISMA_Quantum`. Measured at **0.650–0.700**, equal to canonical, and it finds documents authored today that have **zero tiles** in the v2 class. Two live production consumers use it correctly. `/search` remains the canonical prose route; adaptive is supported, not deprecated.
+- ✅ MCP: `isma_search` queries V1 — use this for prose. Keep **`enriched_only=false`** (the default — just don't set it true).
 - ❌ NEVER: `/search/hmm`, `/v2/search/hmm`, `/search/motif`, `isma_motif_search`, or `enriched_only=true`. These filter to HMM-enriched tiles and will return a fraction of what exists — or miss the prose entirely.
 
 ## RULE 2 — GO DEEP. (No "a few results." Depth is mandatory.)
@@ -83,7 +85,7 @@ Response: `{"tiles":[{content, content_hash, scale, source_file, source_type, hm
 ### B. MCP
 ```
 isma_search(query="<phrasing>", top_k=40)                               # hybrid over V1 ISMA_Quantum; DO NOT pass enriched_only=true — USE THIS
-isma_adaptive_search(query="what do we know about <topic>", top_k=25)   # routes to the V2 shadow class; prefer isma_search for prose
+isma_adaptive_search(query="what do we know about <topic>", top_k=25)   # SUPPORTED: V1-based + V2 overlay, measured equal to canonical (corrected 2026-07-30)
 isma_get_tile(content_hash) / isma_graph_traverse(...)                  # expand/relate
 ```
 NOTE: if your MCP `isma_search(scale="full_4096")` path returns empty, use the **HTTP `/search` scale=full_4096** call above instead of the MCP scale filter.
