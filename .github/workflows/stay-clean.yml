@@ -1,0 +1,82 @@
+name: stay-clean
+
+'on':
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stay-clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject root doc sprawl and data artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          readonly ONE_MIB=1048576
+          ROOT_MD_ALLOWLIST=$(cat <<'ALLOWLIST'
+          AGENTS.md
+          CLAUDE.md
+          ISMA_PROSE_RETRIEVAL_SPEC.md
+          KNOWN_FINDINGS.md
+          MEMORY_GOVERNANCE.md
+          PRODUCTION.md
+          README.md
+          ALLOWLIST
+          )
+          DATA_OR_LARGE_ALLOWLIST=$(cat <<'ALLOWLIST'
+          ALLOWLIST
+          )
+
+          listed_exact() {
+            local needle="$1" line
+            while IFS= read -r line; do
+              [ -n "$line" ] || continue
+              [ "$needle" = "$line" ] && return 0
+            done <<< "$2"
+            return 1
+          }
+
+          fails=0
+
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            if ! listed_exact "$path" "$ROOT_MD_ALLOWLIST"; then
+              echo "::error file=$path::root-level Markdown is not allowlisted; put working docs under docs/ or the tracker"
+              fails=$((fails + 1))
+            fi
+          done < <(git ls-files '*.md' | awk 'index($0, "/") == 0' | sort)
+
+          while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            if ! listed_exact "$path" "$DATA_OR_LARGE_ALLOWLIST"; then
+              echo "::error file=$path::data-shaped files (*.jsonl/*.parquet) must be deliberately allowlisted"
+              fails=$((fails + 1))
+            fi
+          done < <(git ls-files '*.jsonl' '*.parquet' | sort)
+
+          while IFS= read -r -d '' path; do
+            size="$(wc -c < "$path")"
+            if [ "$size" -le "$ONE_MIB" ]; then
+              continue
+            fi
+            if ! listed_exact "$path" "$DATA_OR_LARGE_ALLOWLIST"; then
+              echo "::error file=$path::file is ${size} bytes (>1 MiB) and is not allowlisted"
+              fails=$((fails + 1))
+            fi
+          done < <(git ls-files -z)
+
+          if [ "$fails" -ne 0 ]; then
+            echo "stay-clean failed: $fails violation(s)"
+            exit 1
+          fi
+
+          echo "stay-clean passed"
