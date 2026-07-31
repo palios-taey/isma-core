@@ -411,6 +411,7 @@ def _build_where_filter(
     session_id: str = None,
     document_id: str = None,
     content_hash: str = None,
+    authority: str = None,
     has_artifacts: bool = None,
     has_thinking: bool = None,
     layer: int = None,
@@ -441,6 +442,18 @@ def _build_where_filter(
     if ingest_pipeline:
         conditions.append(
             f'{{ path: ["ingest_pipeline"], operator: Equal, valueText: "{_escape_graphql(ingest_pipeline)}" }}')
+    if authority:
+        # Restrict to tiles carrying an explicit authority label (e.g.
+        # "canonical_procedure"). Ranking cannot express authority: a
+        # similarity score says how much a tile RESEMBLES the question, not
+        # whether it is the authoritative answer. Measured 2026-07-30 on 12
+        # operational how-do-I questions: unfiltered semantic returned the
+        # correct canonical doc 7/12, while the same questions filtered to
+        # authority="canonical_procedure" returned it 11/12 — and an
+        # unfiltered top hit was an unrelated transcript line scoring 0.45.
+        # So authority is a FILTER concern, exactly like is_superseded.
+        conditions.append(
+            f'{{ path: ["authority"], operator: Equal, valueText: "{_escape_graphql(authority)}" }}')
     if scale:
         conditions.append(
             f'{{ path: ["scale"], operator: Equal, valueText: "{_escape_graphql(scale)}" }}')
@@ -670,6 +683,7 @@ class ISMARetrieval:
                document_id: str = None,
                source_file: str = None,
                content_hash: str = None,
+               authority: str = None,
                has_artifacts: bool = None,
                has_thinking: bool = None,
                layer: int = None,
@@ -751,6 +765,7 @@ class ISMARetrieval:
             ingest_pipeline=ingest_pipeline,
             session_id=session_id, document_id=document_id,
             source_file=source_file, content_hash=content_hash,
+            authority=authority,
             has_artifacts=has_artifacts, has_thinking=has_thinking,
             layer=layer, min_priority=min_priority, model=model,
             dominant_motifs=dominant_motifs, hmm_enriched=hmm_enriched,

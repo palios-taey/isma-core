@@ -140,6 +140,7 @@ class SearchRequest(BaseModel):
     source_type: Optional[str] = None
     source_file: Optional[str] = None
     ingest_pipeline: Optional[str] = None
+    authority: Optional[str] = None
     scale: Optional[str] = None
     session_id: Optional[str] = None
     document_id: Optional[str] = None
@@ -187,6 +188,8 @@ class BM25Request(BaseModel):
     include_superseded: Optional[bool] = False
     platform: Optional[str] = None
     source_type: Optional[str] = None
+    source_file: Optional[str] = None
+    authority: Optional[str] = None
 
 
 class HMMStoreRequest(BaseModel):
@@ -246,7 +249,7 @@ def search(req: SearchRequest):
     r = get_retrieval()
     filters = {}
     for field_name in ["platform", "source_type", "source_file",
-                       "ingest_pipeline", "scale", "session_id",
+                       "ingest_pipeline", "authority", "scale", "session_id",
                        "document_id", "has_artifacts", "has_thinking",
                        "layer", "min_priority", "model", "dominant_motifs",
                        "hmm_enriched", "min_hmm_phi", "min_hmm_trust",
@@ -331,6 +334,10 @@ def search_bm25(req: BM25Request):
         filters["platform"] = req.platform
     if req.source_type:
         filters["source_type"] = req.source_type
+    if req.source_file:
+        filters["source_file"] = req.source_file
+    if req.authority:
+        filters["authority"] = req.authority
 
     result = r.search_bm25(
         query=req.query,
@@ -491,6 +498,47 @@ def v2_stats():
 
 @app.post("/v2/search")
 def v2_search(req: V2SearchRequest):
+    # DEPRECATED 2026-07-31 — FAILS LOUD rather than serving a degraded answer.
+    #
+    # This route queries ISMA_Quantum_v2 alone: 73,809 tiles = 4.59% of the live
+    # corpus, a frozen partial migration. Measured on one query: /search scored
+    # 0.650 while this route scored 0.056 and returned raw transcript blobs.
+    #
+    # It answered HTTP 200 with plausible-looking tiles, so nothing signalled the
+    # degradation. Real research queries landed here and got answers built on a
+    # twentieth of what we know; the caller only escaped by probing / and /health
+    # and discovering /search. A near-miss that looks like success is worse than
+    # an error, so this now IS an error.
+    #
+    # NOT deprecated: /v2/search/adaptive, which is V1-based with a V2 overlay and
+    # measures equal to canonical. Deprecating it would break live consumers.
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "error": "gone",
+            "route": "/v2/search",
+            "reason": (
+                "Deprecated 2026-07-31. This route queries the ISMA_Quantum_v2 shadow "
+                "class (73,809 tiles = 4.59% of the corpus, frozen). It returned "
+                "confident-looking results built on a fraction of the corpus."
+            ),
+            "use_instead": "POST /search",
+            "note": (
+                "Same request body, same response shape. /v2/search/adaptive is NOT "
+                "deprecated and remains supported."
+            ),
+        },
+    )
+
+
+@app.post("/v2/search/_disabled_impl")
+def _v2_search_impl_retained(req: V2SearchRequest):
+    """Original /v2/search implementation, retained but unrouted.
+
+    Kept so the deprecation is reversible by editing one decorator rather than by
+    reconstructing deleted code from history — archive-before-delete applied to a
+    route.
+    """
     from isma.src.retrieval_v2 import get_retrieval_v2
     r = get_retrieval_v2()
 
