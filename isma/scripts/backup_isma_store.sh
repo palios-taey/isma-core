@@ -57,9 +57,26 @@ if [ "${FREE_KB:-0}" -lt "${NEED_KB:-0}" ]; then
   exit 1
 fi
 
-rsync -a --delete "$STORE/" "$TARGET/data/" >> "$LOG" 2>&1
+# RSYNC_CMD lets the unit supply privilege (e.g. "sudo -n") for the handful of
+# root-owned files inside an otherwise user-owned store. Weaviate's raft
+# db_users/users.json is root:root mode 600; without privilege rsync exits 23 and
+# the whole backup is refused for one 148-byte file.
+RSYNC="${ISMA_RSYNC_CMD:-}"
+$RSYNC rsync -a --delete "$STORE/" "$TARGET/data/" >> "$LOG" 2>&1
 RC=$?
-if [ "$RC" -ne 0 ]; then
+# Exit-code semantics matter on a LIVE store:
+#   24 = source files vanished mid-copy. On a running LSM store, WAL segments are
+#        created and compacted away constantly, so 24 is EXPECTED and benign — the
+#        vanished file was transient by definition. Treating it as failure would
+#        make every nightly run fail on a healthy system, and an alarm that always
+#        fires is an alarm nobody reads.
+#   23 = partial transfer due to an ERROR (typically permission). Genuine failure.
+# Observed 2026-07-31 on the first real run: exit 23 from one root-owned file,
+# alongside a benign vanished WAL segment. Two different problems in one exit code
+# is exactly why this is now discriminated rather than lumped together.
+if [ "$RC" -eq 24 ]; then
+  echo "$(ts) NOTE: rsync exit 24 — source files vanished mid-copy (normal WAL churn on a live store); continuing to verification" >> "$LOG"
+elif [ "$RC" -ne 0 ]; then
   alert "ISMA BACKUP FAILED: rsync exit $RC. Partial copy left at $TARGET for inspection — NOT counted as a backup."
   exit 1
 fi
