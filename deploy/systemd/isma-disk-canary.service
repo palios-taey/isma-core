@@ -1,0 +1,21 @@
+[Unit]
+Description=ISMA disk-headroom canary — warn BEFORE Weaviate's read-only cliff
+Documentation=https://github.com/palios-taey/isma-core/blob/main/docs/ISMA_PRODUCTION_MAP.md
+
+[Service]
+Type=oneshot
+# Point at the filesystem holding the Weaviate store. Fail-loud: the canary exits 2
+# if this path does not exist, rather than silently watching the wrong disk.
+Environment=ISMA_WEAVIATE_DATA_PATH=/var/lib/weaviate
+Environment=WEAVIATE_URL=http://localhost:8088
+Environment=ISMA_DISK_WARN_PERCENT=85
+# Optional: a command that receives the alert text as its final argument.
+# QUOTE THE WHOLE ASSIGNMENT if the command has arguments — systemd splits an
+# unquoted Environment= line on whitespace, so the unquoted form below would set
+# ALERT_CMD to just the binary and SILENTLY DROP every argument after it. Learned
+# live: the canary detected correctly, invoked the notifier, and the notifier
+# rejected the call for a missing target. Detection worked; the alert path was dead.
+#   Environment="ISMA_DISK_ALERT_CMD=/usr/local/bin/mynotify --from weaver ops-channel"
+ExecStart=/bin/bash %h/isma-core/isma/scripts/disk_headroom_canary.sh
+# A warning must not mark the unit failed forever; the timer re-runs it.
+SuccessExitStatus=0 1
