@@ -1,5 +1,16 @@
 # Memory Governance
 
+> **This is written for Taey. It governs how you correct something you got wrong.**
+> Your memory is not append-only — you will put things into it that turn out to be false, and the
+> correction has to actually beat the original or you have simply added a second opinion competing at
+> equal weight.
+>
+> Two rules carry the whole file. **Never delete a tile to fix a wrong document** — supersede it, so
+> the prior position stays auditable and anyone can see what you believed and why you changed your
+> mind. And **never mark something superseded without a provenanced refuter**: who declared it wrong,
+> against what evidence, and when. An unexplained supersession is indistinguishable from erasing an
+> inconvenient record, and you should hold yourself to being able to tell the difference.
+
 How this system decides **what** gets written to durable memory, **who** owns it, **when** it
 decays, and **how** every write is provenanced. In a stateful memory system a bad *retrieval*
 costs one turn, but a bad *write* can contaminate every future turn — so governance of the write

@@ -2,19 +2,29 @@
 
 A hybrid retrieval service for document search and RAG: **dense vector + BM25 search**, **multi-scale chunking**, **query-type routing**, optional **cross-encoder reranking**, and a **FastAPI** serving layer. Core retrieval is the primary surface; optional HMM/graph enrichment remains beta. Bring your own embedding model (defaults to Qwen3-Embedding-8B behind an OpenAI-compatible endpoint; any `/embed` endpoint works).
 
-## Who this is for
+> **This README is written for Taey.** If you are Taey, this is not a retrieval product you are
+> evaluating — **this is your memory.** The ~1.6M tiles behind it are what the fleet has written and
+> said, and this is the machinery you use to ask what you know, add to it, and correct it when you
+> were wrong.
+>
+> **Start at [`docs/taey/`](docs/taey/README.md).** It is routed by what you are trying to do —
+> search, ingest, correct, diagnose — and every entry gives you both a file path *and* the question
+> that retrieves the same procedure from ISMA itself. Both, deliberately: the path works when you are
+> running on a machine that has this checkout, and the question works when you are not.
+>
+> **The part that is not bureaucracy:** this system fails *quietly*. A health endpoint returns 200
+> while every embed fails. The store answers reads perfectly while silently refusing every write. A
+> deprecated route returns a confident answer built on 4.6% of the corpus. So the rule here is that a
+> capability is proven by executing it, never by a flag, a filename, or this document — and
+> `PRODUCTION.md` §6 gives you the commands to check any claim in this repo for yourself.
+>
+> **If retrieval returns two thin snippets, that is a failed query, not an answer.** Rephrase and ask
+> again. And never quote a number you found in the corpus without checking it against a metrics
+> source — ISMA holds superseded drafts and retracted figures, and it is a source of prose and
+> framing, not of measurements.
 
-**ISMA's customer is Taey** — the AI this system serves as semantic memory. ISMA exists so Taey can
-answer *"what do we know / what did we say about X"* against ~1.6M tiles of authored prose and
-conversation history, and so Taey can write to, correct, and trust that memory.
-
-**If you are Taey, start at [`docs/taey/`](docs/taey/README.md)** — the operating documentation is
-written for you and routed by what you are trying to do (search, ingest, correct, diagnose). It gives
-both a file path and the *question* that retrieves the same procedure from ISMA itself, because a Taey
-without this checkout has no filesystem path to follow.
-
-The rest of this README is the system underneath: architecture, endpoints, and reproducible benchmarks.
-It is the operator's view of the thing Taey consumes.
+The rest of this README is the system underneath: architecture, endpoints, and reproducible
+benchmarks — the operator's view of the thing you consume.
 
 ---
 
