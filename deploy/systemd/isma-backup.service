@@ -7,6 +7,10 @@ Type=oneshot
 Environment=ISMA_STORE_PATH=/var/lib/weaviate
 Environment=ISMA_BACKUP_DIR=/home/mira/backups
 Environment=ISMA_BACKUP_RETAIN=2
+# A live Weaviate store contains a few root-owned files (raft/db_users/users.json
+# is root:root 0600). Without privilege rsync exits 23 and the entire backup is
+# refused over one 148-byte file. Requires passwordless sudo for this command.
+Environment="ISMA_RSYNC_CMD=sudo -n"
 # QUOTE the whole assignment when the command takes arguments — systemd splits an
 # unquoted Environment= line on whitespace and silently drops everything after the
 # binary, which produces a backup system whose failure alerts never arrive.
