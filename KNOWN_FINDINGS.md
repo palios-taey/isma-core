@@ -17,7 +17,7 @@ optional advanced surface. Nothing here blocks the core retrieval path.
 
 ## Live production snapshot (2026-06-28)
 
-- **Query API** — `http://127.0.0.1:8095` is serving from `/home/mira/isma-core` against the live production store on `http://localhost:8088`.
+- **Query API** — `http://127.0.0.1:8095` is serving from the repository root against the live production store on `http://localhost:8088`.
 - **Weaviate `ISMA_Quantum` tiles** — 1,547,198
 - **Neo4j `ISMASession` / `ISMAExchange` / `Document`** — 10,159 / 65,010 / 25,850
 - **HMM substrate** — `HMMTile` 207,679; `HMMMotif` 57; `EXPRESSES` 462,384; `RELATES_TO` 690,272
