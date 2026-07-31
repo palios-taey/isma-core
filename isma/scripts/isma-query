@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""isma-query — fleet convenience wrapper for ISMA PROSE-DEPTH retrieval.
+
+Canonical spec (authoritative, owner=weaver):
+  ISMA_PROSE_RETRIEVAL_SPEC.md (isma-core repo root)
+
+This wraps the canonical HTTP call  POST http://localhost:8095/search  and
+bakes in the spec's hard rules so you can't accidentally violate them:
+  • NO HMM  — uses /search (plain hybrid). The .md prose is hmm_enriched=false;
+              HMM-gated paths HIDE it. (Never /search/hmm or enriched_only=true.)
+  • GO DEEP — defaults top_k=25 + scale=full_4096 (full ~2K-char passages, full
+              content). Shallow queries are a failed query.
+  • CANNOT-LIE — ISMA is prose/FRAMING depth, NOT a metric source. Cross-check any
+              number against your own verified metrics baseline, never against ISMA prose.
+
+For real depth, the spec says: run 3-6 phrasings + UNION, do a --precision pass
+too, and expand docs that matter (curl :8095/document/<hash>/text). One pass of
+this CLI is the starting point, not the whole query.
+
+Usage:
+  isma-query "what do we know about <topic>"     # deep full-passage, top_k 25
+  isma-query "..." -k 40                           # broader topic
+  isma-query "..." --precision                     # search_512 pinpoint pass (union with default)
+  isma-query "..." --our-prose                     # only our authored .md (ingest_pipeline=watch_md_v1)
+  isma-query "..." --json
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import urllib.request
+
+API = "http://localhost:8095/search"
+
+
+def search(query: str, top_k: int, scale: str, our_prose: bool) -> dict:
+    body = {"query": query, "top_k": top_k, "scale": scale}
+    if our_prose:
+        body["ingest_pipeline"] = "watch_md_v1"
+    req = urllib.request.Request(
+        API, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=45) as resp:
+        return json.load(resp)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description="ISMA prose-depth retrieval — canonical :8095 /search (NO-HMM, GO-DEEP)."
+    )
+    ap.add_argument("query", help="topic / question")
+    ap.add_argument("-k", "--top-k", type=int, default=25, help="results (>=25; 40-50 for broad topics)")
+    ap.add_argument("--precision", action="store_true",
+                    help="search_512 pinpoint pass instead of full_4096 depth (union both for coverage)")
+    ap.add_argument("--our-prose", action="store_true",
+                    help="filter to our authored .md only (ingest_pipeline=watch_md_v1)")
+    ap.add_argument("--json", action="store_true", help="raw JSON")
+    a = ap.parse_args()
+
+    scale = "search_512" if a.precision else "full_4096"
+    try:
+        data = search(a.query, a.top_k, scale, a.our_prose)
+    except Exception as exc:  # fail loud — never silent
+        print(f"isma-query ERROR ({API}): {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+
+    tiles = data.get("tiles") or []
+    if a.json:
+        print(json.dumps(data, indent=2))
+        return 0
+    if not tiles:
+        print(f"(no ISMA tiles for {a.query!r} @ scale={scale})")
+        return 0
+
+    print(f"=== ISMA /search scale={scale} top_k={a.top_k} — {len(tiles)} tiles for: {a.query} ===")
+    print("(prose/FRAMING depth — NOT a metric source; cross-check every number against a verified metrics baseline)")
+    for i, t in enumerate(tiles, 1):
+        src = t.get("source_basename") or t.get("source_file") or ""
+        stype = t.get("source_type") or ""
+        score = t.get("score", "?")
+        chash = t.get("content_hash") or ""
+        content = (t.get("content") or t.get("content_preview") or "").strip()
+        print(f"\n[{i}] score={score}  {stype}  {src}" + (f"  #{chash}" if chash else ""))
+        print(content[:700])
+    print(
+        f"\n--- {len(tiles)} tiles @ {scale}. DEPTH: re-run with 3-6 phrasings + union, "
+        f"a --precision pass, and expand hits via  curl :8095/document/<content_hash>/text. "
+        f"Spec: ISMA_PROSE_RETRIEVAL_SPEC.md (isma-core repo root)"
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
