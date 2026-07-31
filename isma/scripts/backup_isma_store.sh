@@ -15,7 +15,7 @@
 #     still exits 0 for the files it did transfer)
 #   * rotation NEVER drops below RETAIN_MIN good backups — replace-then-retire,
 #     never zero recovery points
-#   * restorability is a SEPARATE, heavier check (restore_verify_isma.sh); this
+#   * restorability is a SEPARATE, heavier check (restore_verify_isma.py); this
 #     script does not claim a backup is restorable, only that it is complete
 #
 # Usage: backup_isma_store.sh
@@ -99,7 +99,7 @@ source:       $STORE
 size:         $((GOT_KB/1024/1024))G
 host:         $(hostname)
 NOTE: completeness verified (size floor + structure). RESTORABILITY is proven
-separately by isma/scripts/restore_verify_isma.sh — existence is not restorability.
+separately by isma/scripts/restore_verify_isma.py — existence is not restorability.
 EOF
 echo "$(ts) OK: backup complete at $TARGET ($((GOT_KB/1024/1024))G)" >> "$LOG"
 
