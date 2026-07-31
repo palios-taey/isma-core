@@ -65,3 +65,41 @@ id = "presigned-url-token"
 description = "Presigned URL carrying a live access token"
 regex = '''(?i)[?&](X-Amz-Signature|X-Amz-Credential|Signature|AWSAccessKeyId)=[A-Za-z0-9%/+_-]{16,}'''
 tags = ["credentials", "cloud"]
+
+# ── Low-entropy credential rule ────────────────────────────────────────────
+# WHY THIS EXISTS (found by infra 2026-07-31; reproduced here on isma-core):
+# gitleaks' built-in rules score by ENTROPY. A human-chosen password like
+# "mira2024" or "letmein" has low entropy, trips no generic-api-key rule, and the
+# scan exits 0 — so a repo can be gitleaks-GREEN while carrying a credential.
+# PRIVATE_TO_PUBLIC.md prescribes gitleaks as THE secret gate; alone it is NOT
+# sufficient. Verified on this repo: three planted weak credentials passed the
+# unmodified gate cleanly.
+#
+# This matches the SHAPE (a credential name assigned a quoted literal) rather than
+# the CONTENT, which is precisely what entropy scoring gets wrong. Note the leading
+# [\w.\[\]"']* — without it, \bpassword fails to match NEO4J_PASSWORD, because the
+# preceding underscore IS a word character so there is no boundary. That single
+# omission made an earlier draft of this rule silently match nothing.
+[[rules]]
+id = "low-entropy-credential-assignment"
+description = "Credential assigned a literal value (entropy scoring misses weak passwords)"
+regex = '''(?i)[\w.\[\]"']*(?:password|passwd|pass|pwd|secret|api[_-]?key|token|credential)\s*[:=]\s*["'][^"'\n]{3,}["']'''
+tags = ["credentials", "low-entropy"]
+
+[rules.allowlist]
+description = "Legitimate shapes: env lookups, empty/None defaults, annotations, placeholders, imports, comments."
+regexes = [
+  '''(?i)(os\.)?(environ(\.get)?|getenv)\s*\(''',
+  '''(?i)[:=]\s*(None|null|nil|""|'')\s*$''',
+  '''(?i)\w*(password|passwd|token|secret)\w*\s*:\s*(str|Optional|bool|int)''',
+  '''(?i)["'](your[-_ ]?[\w-]+|<[^>]+>|changeme|xxx+|redacted|example\w*|placeholder)["']''',
+  '''(?i)^\s*(#|//|from\s|import\s)''',
+  '''(?i)basic_auth\(''',
+]
+paths = ['''\.env\.example$''', '''(^|/)(README|CHANGELOG|KNOWN_FINDINGS)\.md$''']
+
+[[rules]]
+id = "credential-tuple-literal"
+description = "Auth tuple with a literal secret, e.g. auth = (\"user\", \"pass\")"
+regex = '''(?i)\b(?:auth|credentials)\s*=\s*\(\s*["'][^"'\n]+["']\s*,\s*["'][^"'\n]{3,}["']\s*\)'''
+tags = ["credentials", "low-entropy"]
