@@ -14,12 +14,25 @@
 #
 # It also PROBES WRITABILITY rather than inferring it from the percentage. Disk usage
 # predicts the cliff; only a real write proves which side of it you are on.
+#
+# ALERTS ARE DEDUPED BY STATE TRANSITION, not emitted every run. A steady 89% would
+# otherwise alert on every timer cycle until the cleanup lands, the fleet would learn
+# to ignore it, and the next real cliff would arrive into a muted channel. Alert
+# fatigue is how genuine failures get missed. So it alerts on:
+#   * CROSSING into the warn band (healthy -> warning)
+#   * WORSENING while in the band (a higher percentage than last alerted)
+#   * a WRITE-PROBE FAILURE, always, every run — the store being read-only is the
+#     emergency itself and must never be suppressed
+#   * one REMINDER per ISMA_DISK_REMIND_SECS (default 24h) while steady
+# Recovery below the threshold clears the state, so the next crossing alerts again.
 set -u
 
 THRESHOLD="${ISMA_DISK_WARN_PERCENT:-85}"
 DATA_PATH="${ISMA_WEAVIATE_DATA_PATH:-/var/lib/weaviate}"
 WEAVIATE_URL="${WEAVIATE_URL:-http://localhost:8088}"
 LOG="${ISMA_CANARY_LOG:-/tmp/disk_headroom_canary.log}"
+STATE="${ISMA_CANARY_STATE:-/tmp/disk_headroom_canary.state}"
+REMIND_SECS="${ISMA_DISK_REMIND_SECS:-86400}"
 # How to raise an alert. Fleet deployments set this to their notifier; if unset the
 # canary still logs and exits non-zero, so a supervisor or timer can act on it.
 ALERT_CMD="${ISMA_DISK_ALERT_CMD:-}"
@@ -53,21 +66,48 @@ if command -v curl >/dev/null 2>&1; then
   esac
 fi
 
+# Previous state: "<last_alerted_percent> <epoch_of_last_alert>", absent when healthy.
+PREV_PCT=""; PREV_TS=0
+if [ -r "$STATE" ]; then
+  read -r PREV_PCT PREV_TS < "$STATE" 2>/dev/null || true
+  PREV_PCT="${PREV_PCT:-}"; PREV_TS="${PREV_TS:-0}"
+fi
+NOW=$(date +%s)
+
+# Emit the alert and record that we did, so the next run can dedup against it.
 raise() {
   echo "$(ts) $1" >> "$LOG"
   [ -n "$ALERT_CMD" ] && $ALERT_CMD "$1" >> "$LOG" 2>&1
+  echo "$USED $NOW" > "$STATE" 2>/dev/null || true
   return 0
 }
+# Condition persists but does not warrant waking anyone again.
+note() { echo "$(ts) [suppressed, no state change] $1" >> "$LOG"; }
 
-# The store being read-only is the emergency, whatever the percentage says.
+# The store being read-only is the emergency, whatever the percentage says, and it
+# is NEVER suppressed — a dedup rule that can silence an active outage is a bug.
 if [ "$WRITE_OK" -ne 0 ]; then
   raise "ISMA DISK CRITICAL: Weaviate store is NOT ACCEPTING WRITES (probe failed, http=${code:-none}). Disk ${USED}% used, ${AVAIL} free on ${DATA_PATH}. Ingestion is failing SILENTLY while reads keep working."
   exit 1
 fi
 
 if [ "$USED" -ge "$THRESHOLD" ]; then
-  raise "ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%, Weaviate goes READ-ONLY at 90%), ${AVAIL} free on ${DATA_PATH}. Writes still succeed (probe passed). Restore headroom before the cliff — past 90% every write fails silently while search stays green."
+  MSG="ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%, Weaviate goes READ-ONLY at 90%), ${AVAIL} free on ${DATA_PATH}. Writes still succeed (probe passed). Restore headroom before the cliff — past 90% every write fails silently while search stays green."
+  if [ -z "$PREV_PCT" ]; then
+    raise "$MSG"                                     # crossing into the band
+  elif [ "$USED" -gt "$PREV_PCT" ]; then
+    raise "WORSENING — $MSG (was ${PREV_PCT}%)"      # deteriorating
+  elif [ $((NOW - PREV_TS)) -ge "$REMIND_SECS" ]; then
+    raise "REMINDER — $MSG"                          # still unresolved
+  else
+    note "$MSG"                                      # steady: log only
+  fi
   exit 1
 fi
 
+# Recovered below the threshold: clear state so the next crossing alerts again.
+if [ -n "$PREV_PCT" ]; then
+  echo "$(ts) RECOVERED: ${USED}% used, below the ${THRESHOLD}% threshold (was ${PREV_PCT}%)" >> "$LOG"
+  rm -f "$STATE" 2>/dev/null || true
+fi
 exit 0
