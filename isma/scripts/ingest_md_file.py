@@ -147,11 +147,23 @@ def insert_objects(objs: list) -> int:
                          json=payload, timeout=60)
         r.raise_for_status()
         results = r.json()
-        # Count ONLY explicit SUCCESS. A missing/failed per-object status is a
-        # FAILURE, and its error is surfaced — a read-only store (e.g. Weaviate
-        # DISKGATE at 90% disk) returns HTTP 200 with per-object
-        # status=FAILED; the old `or "SUCCESS"` default miscounted that as
-        # inserted, reporting success while zero tiles persisted.
+        # Count ONLY explicit SUCCESS, and surface the error for anything else.
+        #
+        # The old form was `(res.get("status") or "SUCCESS") == "SUCCESS"`. Be
+        # precise about what that did, because an earlier version of this comment
+        # was wrong and asserted more than was known:
+        #   status="FAILED"        -> "FAILED" != "SUCCESS"  -> correctly NOT counted
+        #   status missing/None/"" -> defaults to "SUCCESS"  -> COUNTED. False success.
+        # So the defect is the MISSING-status path, not the FAILED path. Verified
+        # live 2026-08-01: a rejected object comes back status="FAILED" with errors
+        # populated, which the old form already handled correctly.
+        #
+        # OBSERVED: during the DISKGATE incident this script reported inserted
+        # counts for writes that did not persist. UNKNOWN: whether a read-only
+        # store omits the per-object status (which would make the old default the
+        # cause) or fails some other way — reproducing it needs a full disk, which
+        # is not worth doing. This form is correct under BOTH readings: it counts
+        # only an explicit SUCCESS, so a missing status can never inflate the count.
         ok = 0
         for x in results:
             res = x.get("result", {}) or {}
