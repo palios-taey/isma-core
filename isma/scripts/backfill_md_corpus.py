@@ -55,6 +55,27 @@ EXCLUDE_SUBPATHS = (
     # a 295M benchmark scratch tree there holding 418 .md — widening the isma-core
     # watch root without this would bury the canonical specs under benchmark output.
     "/.local/", "/.pytest_cache/",
+    # Added 2026-08-01, REPO-SCOPED ON PURPOSE. Archived docs are superseded or
+    # historical by definition; re-ingesting them adds live competitors for
+    # questions the canonical docs answer.
+    #
+    # Measured before adding, because the honest finding cuts against urgency:
+    # the 5 isma-core archive files contribute 20 live tiles, and across SIX
+    # probes — including the archived usage guide's OWN distinctive phrasing —
+    # they never surface in the top 10; the canonical docs outrank them. So this
+    # is PREVENTION of a future archived doc winning, not remediation of a
+    # present harm, and it is worth saying so rather than overselling it.
+    #
+    # NOT the bare "/archive/": that would drop 507 currently-walked files across
+    # treasurer, taeys-hands, the-conductor and infra-soul — a fleet-wide content
+    # decision affecting other seats' corpora, which is not this lane's to make.
+    #
+    # NOTE: this stops FUTURE ingestion only. The watcher is additive and never
+    # deletes, so the 20 existing tiles remain live. Retiring them is a separate,
+    # deliberate act — and note "archived" is NOT "superseded": the usage guide is
+    # genuinely superseded by the canonical spec, while a historical evaluation
+    # record is superseded by nothing. Marking the latter would corrupt the flag.
+    "/isma-core/docs/archive/",
 )
 
 
