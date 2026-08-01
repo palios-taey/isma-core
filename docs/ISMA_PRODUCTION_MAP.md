@@ -73,9 +73,13 @@ both scheduled; `:8095`, `:8089`, `:8088` all HTTP 200.
    silent-stale ingestion outage. The canary exists *because* the flag lied: `embed-canary.service` POSTs a
    **real embed** every 5 minutes and restarts on non-200. Verified live at authoring time: a real embed
    returned **4096 dimensions**.
-2. **Weaviate goes READ-ONLY at ~90% disk.** Reads keep working perfectly while every write silently fails,
+2. **Weaviate goes READ-ONLY at a disk threshold that is UNVERIFIED (see 4a).** Reads keep working perfectly while every write silently fails,
    so search looks healthy while the corpus stops growing. **Do not infer writability from the disk
    percentage — probe it.** Verified by writing and deleting a probe object: the store is writable now.
+
+### 4a. Correction 2026-08-01 — the 90% read-only threshold is UNVERIFIED
+
+**UNVERIFIED — inherited figure, never observed.** Measured 2026-08-01: the store was at **92% and still accepting writes** (live write probe succeeded, node HEALTHY, no read-only line in the container log, and `DISK_USE_READONLY_PERCENTAGE` is not set). So the real threshold on this deployment is unknown and this number should not be planned against until it is measured. What IS verified: past whatever the real threshold is, **reads keep working perfectly while every write silently fails** — so the check is always a WRITE probe, never a read.
 
 **[Observed] ⚠ Current headroom is thin.** The Weaviate store lives at `/var/spark/weaviate-isma` on
 `/dev/nvme1n1p2`, which is **89% used (203 G free)** — one point below the read-only threshold. Writes

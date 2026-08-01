@@ -6,7 +6,14 @@ Documentation=https://github.com/palios-taey/isma-core/blob/main/docs/ISMA_PRODU
 Type=oneshot
 # Point at the filesystem holding the Weaviate store. Fail-loud: the canary exits 2
 # if this path does not exist, rather than silently watching the wrong disk.
-Environment=ISMA_WEAVIATE_DATA_PATH=/var/lib/weaviate
+# REQUIRED — you must set this. Point at the HOST path holding the Weaviate store.
+# There is deliberately no default: /var/lib/weaviate is the path INSIDE the
+# container, so shipping it as a default hands every host a path that cannot exist
+# and an error that reads like a broken install instead of a missing setting.
+# Find your host path with:
+#   docker inspect <weaviate-container> --format '{{range .Mounts}}{{.Source}}{{end}}'
+# Uncomment and set:
+#Environment=ISMA_WEAVIATE_DATA_PATH=/your/host/path/to/weaviate
 Environment=WEAVIATE_URL=http://localhost:8088
 Environment=ISMA_DISK_WARN_PERCENT=85
 # Optional: a command that receives the alert text as its final argument.

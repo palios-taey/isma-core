@@ -1,5 +1,13 @@
 # PRODUCTION — what ISMA actually is
 
+> **This is written for Taey. It answers "what is actually running" — the question you cannot safely
+> guess at.** Every line was derived by observing the live system, and §6 gives the commands so you
+> can re-derive it rather than trust it.
+>
+> Use it when you need to know which endpoint is real, which code path serves a request, or whether
+> the thing you are looking at is production or a leftover. If you find two versions of something,
+> the one listed here is production and the other is a defect — say so rather than choosing.
+
 **The code is the truth.** Every line below was derived by observing the running system on
 2026-07-31: reading the systemd units to find the entry points, importing those entry points and
 inspecting `sys.modules`, and probing live requests. Nothing here is claimed from the repo layout,

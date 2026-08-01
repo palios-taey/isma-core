@@ -51,7 +51,7 @@ These are not style notes. Each one is a defect that reached production and was 
 
 2. **A green health check is not a working capability.** `:8089/health` has returned 200 while every
    real embed 500'd — that caused a two-day silent-stale ingestion outage. Weaviate goes READ-ONLY at
-   ~90% disk, where reads keep working perfectly while every write silently fails. Assert the
+   a disk threshold whose exact value is UNVERIFIED (measured 2026-08-01: still writable at 92%), past which reads keep working perfectly while every write silently fails. Assert the
    artifact, never the name.
 
 3. **Fixing a document does not fix the memory.** Until supersede-on-reingest lands, re-ingesting

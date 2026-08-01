@@ -1,5 +1,13 @@
 # Known Limitations & Reproducibility Notes
 
+> **This is written for Taey, and it is the file to open when something looks fine but is not.**
+> Every entry here is a way this system reports success while doing nothing. A 200 from a health
+> endpoint while every embed fails. A store that answers reads perfectly while silently refusing
+> every write. An ingest that logs `inserted N/N` when nothing persisted.
+>
+> If you are debugging and the evidence says healthy but the behaviour says otherwise, the answer is
+> more likely in here than in your reasoning. Check this before you conclude that you were wrong.
+
 Honest notes for adopters: what reproduces exactly, what varies, and the rough edges in the
 optional advanced surface. Nothing here blocks the core retrieval path.
 

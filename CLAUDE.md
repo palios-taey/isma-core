@@ -80,7 +80,7 @@ plausible, and builds a parallel path against dead code.
 5. **VALIDATE IN PRODUCTION** — proven by a real production execution observation.
 
 **Assert the artifact, not the name.** A green health check is not a capability: this repo's own
-`:8089/health` has returned 200 while every real embed 500'd, and Weaviate goes read-only at ~90% disk with
+`:8089/health` has returned 200 while every real embed 500'd, and Weaviate goes read-only at a disk threshold that is UNVERIFIED (still writable at 92% on 2026-08-01), with
 reads still working perfectly while every write silently fails. Confirm what actually runs.
 
 ---

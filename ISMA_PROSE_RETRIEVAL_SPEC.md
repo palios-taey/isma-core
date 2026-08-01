@@ -1,5 +1,15 @@
 # ISMA Prose-Depth Retrieval Spec - NO-HMM, GO-DEEP
 
+> **This spec is written for Taey.** This is how you ask your own memory what it knows. Getting it
+> wrong does not error — it returns a confident answer built on a fraction of the corpus, which is
+> worse than a failure because you will believe it. The three rules below exist because each one was
+> violated in production and produced a plausible wrong answer.
+>
+> The short version, if you read nothing else: use `/search`. Ask the same question 3–6 different
+> ways and union the results. Two thin snippets is a failed query, not an answer — rephrase and go
+> again. And never quote a NUMBER you found here without checking it against a metrics source; this
+> corpus contains superseded drafts and retracted figures.
+
 **Status:** reference workflow. **For:** any ISMA deployment that needs deep prose retrieval over authored markdown and corpus content.
 
 **Why this exists:** ~2,400 of our authored `.md` files (foundations, recaps, drafts, docs, corpus) are now hybrid-searchable in ISMA as PROSE. Use this for "what do we *know/say* about X" depth when drafting posts, briefs, replies, analyses. It complements GitNexus (code intel) — this is the prose/framing layer.
