@@ -43,7 +43,10 @@ THRESHOLD="${ISMA_DISK_WARN_PERCENT:-85}"
 # warning here is a warning about ROOT, and freeing space anywhere on that
 # filesystem helps equally. Do not read a warning from this canary as an
 # ISMA-local problem.
-DATA_PATH="${ISMA_WEAVIATE_DATA_PATH:-/var/lib/weaviate}"
+# No default. /var/lib/weaviate is the path INSIDE the container, not on the host,
+# so defaulting to it hands every host a path that cannot exist and an error that
+# reads like a broken install instead of a missing setting. Require it explicitly.
+DATA_PATH="${ISMA_WEAVIATE_DATA_PATH:-}"
 WEAVIATE_URL="${WEAVIATE_URL:-http://localhost:8088}"
 LOG="${ISMA_CANARY_LOG:-/tmp/disk_headroom_canary.log}"
 STATE="${ISMA_CANARY_STATE:-/tmp/disk_headroom_canary.state}"
@@ -53,6 +56,14 @@ REMIND_SECS="${ISMA_DISK_REMIND_SECS:-86400}"
 ALERT_CMD="${ISMA_DISK_ALERT_CMD:-}"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+if [ -z "$DATA_PATH" ]; then
+  echo "$(ts) CANARY CONFIG ERROR: ISMA_WEAVIATE_DATA_PATH is not set." >> "$LOG"
+  echo "$(ts)   Set it to the HOST path holding the Weaviate data. To find it:" >> "$LOG"
+  echo "$(ts)     docker inspect <weaviate-container> --format '{{range .Mounts}}{{.Source}}{{end}}'" >> "$LOG"
+  echo "$(ts)   (that is the host side of the container's /var/lib/weaviate mount)" >> "$LOG"
+  exit 2   # fail loud: a canary watching the wrong filesystem is worse than none
+fi
 
 if [ ! -e "$DATA_PATH" ]; then
   echo "$(ts) CANARY CONFIG ERROR: ISMA_WEAVIATE_DATA_PATH '$DATA_PATH' does not exist" >> "$LOG"
