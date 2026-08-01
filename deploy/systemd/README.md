@@ -13,7 +13,7 @@ systemctl --user list-timers | grep isma      # verify it is scheduled
 ## isma-disk-canary
 
 Warns at 85% disk on the volume holding the Weaviate store, five points before
-Weaviate flips to READ-ONLY at 90%. Past that line **reads keep working perfectly
+Weaviate flips to READ-ONLY at a disk threshold whose real value is UNVERIFIED — see the note below. Past that line **reads keep working perfectly
 while every write silently fails** — search looks healthy while the corpus stops
 growing, and nothing on the read path reveals it.
 
