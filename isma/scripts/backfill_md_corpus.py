@@ -167,18 +167,31 @@ def main():
             continue
         seen_hashes[dh] = str(path)
 
-        present = ing.check_exists_doc(dh)
-        if present:
+        # Skip ONLY when this exact content is already LIVE at this exact path.
+        # The old test was ing.check_exists_doc(dh) — hash-only and
+        # superseded-blind, so it skipped a document whose live tiles sat under a
+        # STALE path, leaving the canonical path permanently empty, and it also
+        # skipped a doc whose only tiles were already superseded.
+        n_here, n_elsewhere = ing.live_tiles_for(dh, str(path))
+        if n_here:
             n_skip_present += 1
             continue
 
-        # New body. In apply mode: optionally purge OUR stale unenriched tiles, then ingest.
+        # New body at this path. In apply mode ingest it; ingest_file supersedes
+        # prior versions (same path, older content) and stale-path copies (same
+        # content, other path). Deletion is never used — marking only.
         if args.apply:
             if args.purge_on_change:
                 n_purged += purge_stale_path_tiles(str(path), dh)
-            ok = ing.ingest_file(path)
-            if ok:
+            outcome = ing.ingest_file(path)
+            if outcome == ing.INGESTED:
                 n_ingest += 1
+            elif outcome == ing.ALREADY_LIVE:
+                # Raced with another writer, or the store changed under us.
+                # Truthfully NOT an ingest.
+                n_skip_present += 1
+            elif outcome == ing.SKIPPED:
+                n_skip_short += 1
             else:
                 n_fail += 1
             if args.pace:
