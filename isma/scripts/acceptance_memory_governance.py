@@ -237,6 +237,33 @@ def main():
               f"outcome={outcome4}; stale live {pre_old} -> {post_old}; current live={post_new} "
               f"— without this, every already-current doc is permanently un-repairable")
 
+        # ---- CASE 5: supersession must NOT cross documents --------------------
+        # source_file is tokenization=word, so a GraphQL Equal on a path matches
+        # by TOKEN and returns unrelated documents whose paths share tokens.
+        # Superseding one document must never touch another.
+        #
+        # Self-contained fixtures on purpose: an earlier draft revised CASE 1's
+        # document here, which legitimately superseded it and turned the shared
+        # invariant red. A case that perturbs another case's fixture cannot tell
+        # you which one failed.
+        d5 = canon_dir / "DOC5.md"
+        s5 = canon_dir / "DOC5_SIBLING.md"      # shares every path token but one
+        d5.write_text(body.replace("fixture", "case five primary"))
+        s5.write_text(body.replace("fixture", "case five sibling, unrelated"))
+        assert ing.ingest_file(d5) == ing.INGESTED, "fixture setup failed"
+        assert ing.ingest_file(s5) == ing.INGESTED, "fixture setup failed"
+        H5_sib = content_hash(s5.read_text())
+        sib_before = live_count(base, doc_hash=H5_sib)
+        # revise ONLY the primary, forcing a supersede pass on its path
+        d5.write_text(d5.read_text() + "\nRevision that triggers a supersede pass.\n")
+        assert ing.ingest_file(d5) == ing.INGESTED, "fixture setup failed"
+        H5_new = content_hash(d5.read_text())
+        sib_after = live_count(base, doc_hash=H5_sib)
+        check("CASE 5 — superseding one doc does not touch a sibling path",
+              sib_before > 0 and sib_after == sib_before,
+              f"sibling live {sib_before} -> {sib_after} (must be unchanged); "
+              f"GraphQL Equal on source_file is token-based and returns other docs")
+
         # ---- invariant sweep --------------------------------------------------
         zero = [h for h in (H, H2, H4_new) if live_count(base, doc_hash=h) == 0]
         check("INVARIANT — no fixture document reachable at zero live tiles",

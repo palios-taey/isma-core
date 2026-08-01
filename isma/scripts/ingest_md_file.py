@@ -253,8 +253,19 @@ def supersede_prior_versions(source_file: str, new_doc_hash: str) -> int:
             log.error(f"supersede {label} query failed for {source_file}: {e}")
             return []
 
+    # CRITICAL: re-check source_file EXACTLY in Python. The GraphQL filter cannot
+    # be trusted for paths — source_file is tokenization=word, so `Equal` matches
+    # on TOKENS, not on the string. Measured: Equal on
+    # "/home/mira/isma-core/PRODUCTION.md" also returns
+    # ".../docs/ISMA_PRODUCTION_MAP.md" and a training-corpus
+    # ".../audit_logs/p4_production_evidence.md" — three different documents.
+    # Without this re-check, superseding one document silently marks tiles of
+    # every other document whose path shares its tokens. live_tiles_for already
+    # does exactly this; this query did not, and that asymmetry was the bug.
     stale, seen_ids = [], set()
     for t in fetch(q_version, "version"):
+        if t.get("source_file") != source_file:
+            continue
         if t.get("doc_hash") and t["doc_hash"] != new_doc_hash:
             stale.append(t); seen_ids.add(t["_additional"]["id"])
     for t in fetch(q_moved, "path-move"):
