@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # Early-warning canary for the DISKGATE cliff.
 #
-# Weaviate flips the store to READ-ONLY at DISK_USE_READONLY_PERCENTAGE (default 90%).
+# Weaviate flips the store to READ-ONLY at DISK_USE_READONLY_PERCENTAGE.
+# THE 90% FIGURE IS UNVERIFIED — it is the documented default, inherited and never
+# observed on this deployment. Measured 2026-08-01: the store was at 92% and STILL
+# ACCEPTING WRITES. Treat the warn threshold as the actionable number and the
+# read-only point as unknown until someone measures it.
 # Past that line reads keep working PERFECTLY while every write silently fails — so
 # search looks healthy, dashboards stay green, and the corpus quietly stops growing.
 # That failure is invisible from the read path, which is exactly why it needs a
@@ -20,7 +24,12 @@
 # to ignore it, and the next real cliff would arrive into a muted channel. Alert
 # fatigue is how genuine failures get missed. So it alerts on:
 #   * CROSSING into the warn band (healthy -> warning)
-#   * WORSENING while in the band (a higher percentage than last alerted)
+#   * WORSENING while in the band — compared against the LAST OBSERVED reading,
+#     never against an all-time high-water mark. That distinction is the whole
+#     defect this rule was rewritten to fix: on 2026-08-01 a stale mark of 89 from
+#     an earlier episode silenced a real climb at 87% and 88%, and the alarm only
+#     woke at 92% — past the cliff it exists to warn about. An anti-silence alarm
+#     that silences the approach is worse than no alarm.
 #   * a WRITE-PROBE FAILURE, always, every run — the store being read-only is the
 #     emergency itself and must never be suppressed
 #   * one REMINDER per ISMA_DISK_REMIND_SECS (default 24h) while steady
@@ -45,6 +54,15 @@ if [ ! -e "$DATA_PATH" ]; then
 fi
 
 USED=$(df --output=pcent "$DATA_PATH" 2>/dev/null | tail -1 | tr -dc '0-9')
+# REPLAY SEAM. Overrides only the OBSERVED PERCENTAGE so a reviewer can replay a
+# real incident sequence and confirm the alerting decision, rather than taking my
+# word that the logic is fixed. It is announced in the log on every use, it cannot
+# suppress an alert (a simulated value still runs the full decision path, and the
+# write-probe branch is untouched), and it is never set in the shipped unit.
+if [ -n "${ISMA_SIMULATE_USED:-}" ]; then
+  echo "$(ts) [REPLAY] simulated reading ${ISMA_SIMULATE_USED}% (real disk is ${USED}%)" >> "$LOG"
+  USED="$ISMA_SIMULATE_USED"
+fi
 AVAIL=$(df -h --output=avail "$DATA_PATH" 2>/dev/null | tail -1 | tr -d ' ')
 if [ -z "${USED:-}" ]; then
   echo "$(ts) CANARY ERROR: could not read disk usage for $DATA_PATH" >> "$LOG"
@@ -66,23 +84,46 @@ if command -v curl >/dev/null 2>&1; then
   esac
 fi
 
-# Previous state: "<last_alerted_percent> <epoch_of_last_alert>", absent when healthy.
-PREV_PCT=""; PREV_TS=0
+# State: "<last_observed_pct> <epoch_of_last_alert> <last_alerted_pct>".
+# LAST_SEEN and LAST_ALERTED are deliberately SEPARATE. Comparing a new reading
+# against the worst-ever value makes any re-climb below that peak invisible;
+# comparing against what we saw on the previous run makes every step upward
+# visible, which is what "worsening" has to mean for an approach to a cliff.
+# Two fields are read from legacy state for backward compatibility.
+LAST_SEEN=""; PREV_TS=0; LAST_ALERTED=""
 if [ -r "$STATE" ]; then
-  read -r PREV_PCT PREV_TS < "$STATE" 2>/dev/null || true
-  PREV_PCT="${PREV_PCT:-}"; PREV_TS="${PREV_TS:-0}"
+  read -r LAST_SEEN PREV_TS LAST_ALERTED < "$STATE" 2>/dev/null || true
+  LAST_SEEN="${LAST_SEEN:-}"; PREV_TS="${PREV_TS:-0}"
+  LAST_ALERTED="${LAST_ALERTED:-$LAST_SEEN}"
 fi
 NOW=$(date +%s)
+
+# STATE EXPIRY. A "last observed" reading is only meaningful if it was observed
+# RECENTLY. In the 2026-08-01 incident the stored value was 89 from an episode
+# hours earlier; the disk had since dropped to 80 and climbed back, but the timer
+# had not run during the low period so RECOVERED never fired and the stale 89
+# silenced a genuine climb at 87%. A stale entry must not be allowed to suppress
+# a current reading — if we have not seen the disk recently, this reading is a
+# fresh crossing, not a continuation.
+STALE_SECS="${ISMA_CANARY_STALE_SECS:-3600}"
+if [ -n "$LAST_SEEN" ] && [ $((NOW - PREV_TS)) -gt "$STALE_SECS" ]; then
+  echo "$(ts) state is stale (${LAST_SEEN}% observed $((NOW - PREV_TS))s ago, limit ${STALE_SECS}s) — treating this reading as a fresh crossing" >> "$LOG"
+  LAST_SEEN=""; LAST_ALERTED=""
+fi
 
 # Emit the alert and record that we did, so the next run can dedup against it.
 raise() {
   echo "$(ts) $1" >> "$LOG"
   [ -n "$ALERT_CMD" ] && $ALERT_CMD "$1" >> "$LOG" 2>&1
-  echo "$USED $NOW" > "$STATE" 2>/dev/null || true
+  echo "$USED $NOW $USED" > "$STATE" 2>/dev/null || true
   return 0
 }
-# Condition persists but does not warrant waking anyone again.
-note() { echo "$(ts) [suppressed, no state change] $1" >> "$LOG"; }
+# Condition persists unchanged. Record what we SAW so the next run compares
+# against reality rather than against the last thing that happened to alert.
+note() {
+  echo "$(ts) [suppressed, no state change] $1" >> "$LOG"
+  echo "$USED $PREV_TS ${LAST_ALERTED:-$USED}" > "$STATE" 2>/dev/null || true
+}
 
 # The store being read-only is the emergency, whatever the percentage says, and it
 # is NEVER suppressed — a dedup rule that can silence an active outage is a bug.
@@ -92,22 +133,24 @@ if [ "$WRITE_OK" -ne 0 ]; then
 fi
 
 if [ "$USED" -ge "$THRESHOLD" ]; then
-  MSG="ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%, Weaviate goes READ-ONLY at 90%), ${AVAIL} free on ${DATA_PATH}. Writes still succeed (probe passed). Restore headroom before the cliff — past 90% every write fails silently while search stays green."
-  if [ -z "$PREV_PCT" ]; then
-    raise "$MSG"                                     # crossing into the band
-  elif [ "$USED" -gt "$PREV_PCT" ]; then
-    raise "WORSENING — $MSG (was ${PREV_PCT}%)"      # deteriorating
+  MSG="ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%, Weaviate goes READ-ONLY at an UNVERIFIED threshold; still writable at 92% on 2026-08-01), ${AVAIL} free on ${DATA_PATH}. Writes still succeed (probe passed). Restore headroom before the cliff — past 90% every write fails silently while search stays green."
+  if [ -z "$LAST_SEEN" ]; then
+    raise "$MSG"                                              # crossing into the band
+  elif [ "$USED" -gt "$LAST_SEEN" ]; then
+    # Compared against the LAST OBSERVED reading, not the worst-ever. Every step
+    # upward alerts, including a re-climb that is still below a previous peak.
+    raise "WORSENING — $MSG (was ${LAST_SEEN}% on the previous check)"
   elif [ $((NOW - PREV_TS)) -ge "$REMIND_SECS" ]; then
-    raise "REMINDER — $MSG"                          # still unresolved
+    raise "REMINDER — $MSG"                                   # still unresolved
   else
-    note "$MSG"                                      # steady: log only
+    note "$MSG"                                               # steady: log only
   fi
   exit 1
 fi
 
 # Recovered below the threshold: clear state so the next crossing alerts again.
-if [ -n "$PREV_PCT" ]; then
-  echo "$(ts) RECOVERED: ${USED}% used, below the ${THRESHOLD}% threshold (was ${PREV_PCT}%)" >> "$LOG"
+if [ -n "$LAST_SEEN" ]; then
+  echo "$(ts) RECOVERED: ${USED}% used, below the ${THRESHOLD}% threshold (was ${LAST_SEEN}%)" >> "$LOG"
   rm -f "$STATE" 2>/dev/null || true
 fi
 exit 0
