@@ -120,21 +120,47 @@ def get_embeddings(texts: list) -> list:
 
 
 # ── Weaviate ──────────────────────────────────────────────────────────────
-def check_exists_doc(doc_hash_value: str) -> bool:
-    """True if any tile already exists for this doc_hash."""
-    q = (f'{{ Get {{ {WEAVIATE_CLASS}('
-         f'where: {{ path: ["doc_hash"], operator: Equal, '
-         f'valueText: "{doc_hash_value}" }}, limit: 1) {{ doc_hash }} }} }}')
+def live_tiles_for(doc_hash_value: str, source_file: str) -> tuple:
+    """Count LIVE tiles carrying this doc_hash, split by path.
+
+    Returns (n_at_this_path, n_at_other_paths).
+
+    Two corrections to the old `check_exists_doc`, which asked only "does ANY tile
+    carry this hash?" and returned a bare bool:
+
+    1. SUPERSEDED-AWARE. A superseded tile is a historical record, not a reason to
+       skip an ingest. The old check counted it, so a superseded copy blocked its
+       own replacement — which is what made BOTH repair orderings destructive:
+       ingest-then-supersede left zero live tiles because the ingest was a no-op,
+       and supersede-then-ingest skipped because the superseded tiles still
+       matched. See docs/MEMORY_GOVERNANCE_REVIEW_2026-08-01.md §4.
+
+    2. PATH-AWARE. The dedup key is (doc_hash, source_file), not doc_hash alone.
+       Identical content at a DIFFERENT path is not "already ingested" — it is the
+       same document indexed under a stale path. Skipping it left the canonical
+       path permanently empty while the stale path stayed live and retrievable.
+
+    Cross-path thrash is not possible here: the batch driver dedups identical
+    bodies within a cycle (`seen_hashes`, first path wins, deterministic), so only
+    one path per body is ever offered to this function in a given pass.
+    """
+    q = ('{ Get { %s(limit: 500, where: {operator: And, operands: ['
+         '{path: ["doc_hash"], operator: Equal, valueText: "%s"},'
+         '{path: ["is_superseded"], operator: NotEqual, valueBoolean: true}'
+         ']}) { source_file } } }' % (WEAVIATE_CLASS, doc_hash_value))
     try:
         r = session.post(f"{WEAVIATE_URL}/v1/graphql",
-                         json={"query": q}, timeout=15)
+                         json={"query": q}, timeout=30)
         r.raise_for_status()
-        data = r.json()
-        items = data.get("data", {}).get("Get", {}).get(WEAVIATE_CLASS) or []
-        return len(items) > 0
+        items = (r.json().get("data", {}).get("Get", {})
+                 .get(WEAVIATE_CLASS) or [])
     except Exception as e:
-        log.warning(f"check_exists_doc failed: {e}")
-        return False
+        # Fail-loud-ish: report "nothing live" so the caller ingests rather than
+        # silently skipping. A duplicate is recoverable; a silent skip is not.
+        log.warning(f"live_tiles_for failed ({e}) — treating as no live tiles")
+        return (0, 0)
+    here = sum(1 for t in items if t.get("source_file") == source_file)
+    return (here, len(items) - here)
 
 
 def insert_objects(objs: list) -> int:
@@ -189,27 +215,52 @@ def supersede_prior_versions(source_file: str, new_doc_hash: str) -> int:
     superseded by definition (version-supersession, not opinion-correction —
     mirrors the memory-governance supersede-on-write semantics).
 
-    Scoped strictly: only tiles whose source_file matches exactly AND whose
-    doc_hash differs from the new ingest AND not already superseded.
+    TWO kinds of stale tile are retired, and only these two:
+
+      1. VERSION CHANGE — same source_file, different doc_hash. An older snapshot
+         of this same file.
+      2. PATH MOVE — same doc_hash, different source_file. Byte-identical content
+         indexed under a stale path. This is what left the canonical path empty
+         while a private-tree path stayed live and retrievable; the old dedup saw
+         the stale-path tiles, called it "already ingested", and skipped forever.
+
+    Both are supersession by definition, not opinion-correction. Nothing is
+    deleted — `is_superseded=true` is the only mutation, so every step here is
+    reversible by flipping the flag back.
+
     Fail-loud: PATCH errors are logged per-object, never swallowed silently.
     Returns the number of tiles marked.
     """
-    gql = {
-        "query": '''{ Get { ISMA_Quantum(limit: 500, where: {operator: And, operands: [
+    safe_path = source_file.replace('"', '')
+    # (1) same path, older content
+    q_version = '''{ Get { ISMA_Quantum(limit: 500, where: {operator: And, operands: [
             {path: ["source_file"], operator: Equal, valueText: "%s"},
             {path: ["is_superseded"], operator: NotEqual, valueBoolean: true}
-        ]}) { doc_hash _additional { id } } } }''' % source_file.replace('"', '')
-    }
-    try:
-        r = session.post(f"{WEAVIATE_URL}/v1/graphql", json=gql, timeout=30)
-        r.raise_for_status()
-        tiles = (r.json().get("data", {}).get("Get", {})
-                 .get("ISMA_Quantum", []) or [])
-    except Exception as e:
-        log.error(f"supersede query failed for {source_file}: {e}")
-        return 0
-    stale = [t for t in tiles
-             if t.get("doc_hash") and t["doc_hash"] != new_doc_hash]
+        ]}) { doc_hash source_file _additional { id } } } }''' % safe_path
+    # (2) same content, other path
+    q_moved = '''{ Get { ISMA_Quantum(limit: 500, where: {operator: And, operands: [
+            {path: ["doc_hash"], operator: Equal, valueText: "%s"},
+            {path: ["is_superseded"], operator: NotEqual, valueBoolean: true}
+        ]}) { doc_hash source_file _additional { id } } } }''' % new_doc_hash
+
+    def fetch(q, label):
+        try:
+            r = session.post(f"{WEAVIATE_URL}/v1/graphql", json={"query": q}, timeout=30)
+            r.raise_for_status()
+            return (r.json().get("data", {}).get("Get", {})
+                    .get("ISMA_Quantum", []) or [])
+        except Exception as e:
+            log.error(f"supersede {label} query failed for {source_file}: {e}")
+            return []
+
+    stale, seen_ids = [], set()
+    for t in fetch(q_version, "version"):
+        if t.get("doc_hash") and t["doc_hash"] != new_doc_hash:
+            stale.append(t); seen_ids.add(t["_additional"]["id"])
+    for t in fetch(q_moved, "path-move"):
+        oid = t["_additional"]["id"]
+        if t.get("source_file") != source_file and oid not in seen_ids:
+            stale.append(t); seen_ids.add(oid)
     marked = 0
     for t in stale:
         oid = t["_additional"]["id"]
@@ -230,33 +281,51 @@ def supersede_prior_versions(source_file: str, new_doc_hash: str) -> int:
     return marked
 
 
-# ── Main ──────────────────────────────────────────────────────────────────
-def ingest_file(path: Path) -> bool:
+# ── Outcomes ──────────────────────────────────────────────────────────────
+# ingest_file used to return a bare bool, and returned True for "I did nothing".
+# A caller could not tell an ingest from a no-op, so batch counters reported
+# skips as successes. Every outcome below is distinct and truthful; the only one
+# that means tiles were written is INGESTED.
+INGESTED = "ingested"          # new tiles written for this (doc_hash, path)
+ALREADY_LIVE = "already-live"  # this exact content is already live at this path
+SKIPPED = "skipped"            # not markdown / too short — nothing to do, not an error
+FAILED = "failed"              # a real failure; the caller must surface it
+
+
+def ingest_file(path: Path) -> str:
     if not path.exists() or not path.is_file():
         log.error(f"not a file: {path}")
-        return False
+        return FAILED
     if path.suffix.lower() != ".md":
         log.info(f"skip (not .md): {path}")
-        return True
+        return SKIPPED
 
     text = path.read_text(encoding="utf-8", errors="replace")
     if len(text.strip()) < 50:
         log.info(f"skip (too short): {path}")
-        return True
+        return SKIPPED
 
     doc_hash = content_hash(text)
     meta = classify(path)
     log.info(f"file={path.name} hash={doc_hash[:12]} source_type={meta['source_type']} repo={meta['source_repo']}")
 
-    # Idempotency: dedup against any existing tile carrying this doc_hash.
-    if check_exists_doc(doc_hash):
-        log.info(f"already ingested: {doc_hash[:12]}")
-        return True
+    # Idempotency, keyed on (doc_hash, source_file) over LIVE tiles only.
+    n_here, n_elsewhere = live_tiles_for(doc_hash, str(path))
+    if n_here:
+        # Genuinely nothing to do: this exact content is already live at this
+        # exact path. Say so honestly — this is NOT an ingest.
+        log.info(f"already live at this path: {doc_hash[:12]} ({n_here} tiles)")
+        return ALREADY_LIVE
+    if n_elsewhere:
+        # Same content, different path — the document moved. Ingest it under the
+        # canonical path; supersede_prior_versions retires the stale-path copies.
+        log.info(f"same content live at {n_elsewhere} tile(s) under another path "
+                 f"— re-homing to {path}")
 
     tiles = multi_scale_tile(text, source_file=str(path), layer=meta["source_type"])
     if not tiles:
         log.warning(f"no tiles produced from {path}")
-        return False
+        return FAILED
 
     log.info(f"  phi-tiled into {len(tiles)} tiles "
              f"(search_512={sum(1 for t in tiles if t.scale=='search_512')} "
@@ -269,11 +338,11 @@ def ingest_file(path: Path) -> bool:
         vectors = get_embeddings(contents)
     except Exception as e:
         log.error(f"embedding failed: {e}")
-        return False
+        return FAILED
 
     if len(vectors) != len(tiles):
         log.error(f"embedding count mismatch: tiles={len(tiles)} vectors={len(vectors)}")
-        return False
+        return FAILED
 
     now_iso = datetime.now(timezone.utc).isoformat()
     src_basename = path.name
@@ -322,7 +391,8 @@ def ingest_file(path: Path) -> bool:
         # Only after a COMPLETE insert: a partial insert must not orphan
         # the old version (better co-current than amnesia).
         supersede_prior_versions(str(path), doc_hash)
-    return ok == len(objs)
+        return INGESTED
+    return FAILED
 
 
 def main():
@@ -330,8 +400,12 @@ def main():
         print(f"usage: {sys.argv[0]} <path-to-md-file>", file=sys.stderr)
         return 2
     target = Path(sys.argv[1]).resolve()
-    ok = ingest_file(target)
-    return 0 if ok else 1
+    outcome = ingest_file(target)
+    print(f"outcome: {outcome}")
+    # Exit 0 only for outcomes that are not failures. ALREADY_LIVE is a truthful
+    # success — nothing needed doing — but the printed outcome distinguishes it
+    # from an actual ingest, so a caller can never read "exit 0" as "it wrote".
+    return 0 if outcome in (INGESTED, ALREADY_LIVE, SKIPPED) else 1
 
 
 if __name__ == "__main__":
