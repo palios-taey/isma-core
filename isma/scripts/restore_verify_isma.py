@@ -29,7 +29,9 @@ Usage:
 Exit 0 only if every check passes.
 """
 import argparse
+import getpass
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -73,6 +75,21 @@ def main():
     data = backup / "data"
     if not data.is_dir():
         print(f"FAIL: {data} not found — not a backup from backup_isma_store.sh")
+        return 2
+
+    # Weaviate runs as root in its container, so some class directories in the store
+    # are mode 700 root-owned, and the backup preserves that ownership. An unprivileged
+    # run therefore cannot READ BACK what the backup legitimately wrote — and rsync
+    # reports it as a generic "permission denied" 200 chars deep in stderr, which reads
+    # like a corrupt backup rather than a missing sudo. Check it upfront and say so.
+    unreadable = [p for p in data.rglob("*") if p.is_dir() and not os.access(p, os.R_OK)]
+    if unreadable:
+        print(f"FAIL: {len(unreadable)} directories in this backup are unreadable as "
+              f"{getpass.getuser()!r} (e.g. {unreadable[0]}).")
+        print("      This is NOT a corrupt backup. Weaviate created those dirs as root")
+        print("      and the backup preserved ownership. Re-run this verification with")
+        print("      the privilege the backup itself used:")
+        print(f"        sudo -n python3 {Path(__file__).name} {backup}")
         return 2
 
     scratch = Path(a.scratch or f"/var/spark/isma-restore-verify-{int(time.time())}")
