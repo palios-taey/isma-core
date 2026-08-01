@@ -312,9 +312,24 @@ def ingest_file(path: Path) -> str:
     # Idempotency, keyed on (doc_hash, source_file) over LIVE tiles only.
     n_here, n_elsewhere = live_tiles_for(doc_hash, str(path))
     if n_here:
-        # Genuinely nothing to do: this exact content is already live at this
-        # exact path. Say so honestly — this is NOT an ingest.
-        log.info(f"already live at this path: {doc_hash[:12]} ({n_here} tiles)")
+        # This exact content is already live at this exact path, so there is
+        # nothing to WRITE. But "nothing to write" is not "nothing to do":
+        # OLDER versions of this same path may still be live alongside it, which
+        # is the retrieval-integrity defect itself — several live answers to the
+        # same question with no currency signal.
+        #
+        # The invariant is per-PATH, not per-ingest: after any call, at most one
+        # live version of a source_file may remain. Enforcing it only on the
+        # writing path left every already-current document permanently
+        # un-repairable — a migration over unchanged files would report
+        # already-live for each and supersede nothing. Found while executing
+        # exactly that migration.
+        marked = supersede_prior_versions(str(path), doc_hash)
+        if marked:
+            log.info(f"already live at this path: {doc_hash[:12]} ({n_here} tiles); "
+                     f"retired {marked} stale tile(s) still live alongside it")
+        else:
+            log.info(f"already live at this path: {doc_hash[:12]} ({n_here} tiles)")
         return ALREADY_LIVE
     if n_elsewhere:
         # Same content, different path — the document moved. Ingest it under the
