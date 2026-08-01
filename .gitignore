@@ -36,3 +36,11 @@ calibration_*.md
 
 # generated runtime state (regenerable by isma/scripts/backfill_md_corpus.py) — never commit
 isma/reports/md_corpus_manifest.json
+
+# Retired path components are history-only, not current public surface.
+archive/
+archived/
+deprecated/
+superseded/
+obsolete/
+legacy/
