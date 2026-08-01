@@ -218,8 +218,20 @@ def main():
     finally:
         if not a.keep:
             sh(["docker", "rm", "-f", name], timeout=60)
+            # Weaviate writes its data dir as ROOT inside the container, so an
+            # unprivileged rm -rf silently fails. Verify rather than announce:
+            # claiming a cleanup that did not happen is the same false-success
+            # this whole change exists to eliminate.
             sh(["rm", "-rf", tmp], timeout=60)
-            print(f"  cleanup: scratch instance and fixtures removed")
+            if os.path.exists(tmp):
+                rc = sh(["sudo", "-n", "rm", "-rf", tmp], timeout=60).returncode
+                if rc != 0 or os.path.exists(tmp):
+                    print(f"  CLEANUP INCOMPLETE — scratch data remains at {tmp} "
+                          f"(root-owned by the container). Remove it manually.")
+                else:
+                    print("  cleanup: scratch instance and fixtures removed (needed sudo)")
+            else:
+                print("  cleanup: scratch instance and fixtures removed")
 
     passed = sum(1 for _, ok in results if ok)
     print(f"\n  {passed}/{len(results)} cases passed")
