@@ -4,6 +4,36 @@
 **Asks for:** one decision covering six coupled levers. They share one root cause and fixing them
 piecemeal produces the harm each fix was meant to prevent — demonstrated below, twice.
 
+> ## ⚠ CORRECTION — 2026-08-01, after execution
+>
+> **The severity figures in this package were measured with a broken instrument and are
+> unreliable.** Every count below came from a GraphQL `Equal` filter on `source_file` — and
+> `source_file` is **`tokenization=word`**, so `Equal` matches by *token*, not by string. Measured:
+> `Equal "/home/mira/isma-core/PRODUCTION.md"` also returns `docs/ISMA_PRODUCTION_MAP.md` and a
+> training-corpus `audit_logs/p4_production_evidence.md` — three different documents. Re-measured
+> exactly, `README.md` holds **13** tiles, not the 37 reported here; 24 belonged to other documents.
+> Its "5 live versions" was substantially an artifact.
+>
+> **What is still true — the defect was real and mechanical, verified in code, not by counting:**
+> supersede never ran. The watcher never passed `--purge-on-change`; the single-file path had no
+> supersede logic; and once added, `ingest_file` returned `ALREADY_LIVE` *before* supersede was
+> reached. `PRODUCTION.md` genuinely carried multiple live versions, confirmed independently.
+>
+> **What is VERIFIED, exact-measured after the fix:** the end state — **7 canonical documents ×
+> exactly 1 live version**, with retrieval returning the *current* `PRODUCTION.md` at rank 1, score
+> 0.788, `doc_hash` confirmed current and unsuperseded.
+>
+> **What is UNKNOWN and now unrecoverable:** the before-magnitude. The migration has run, so the
+> true prior count cannot be re-derived. It could have been 12 redundant versions or 3.
+>
+> The same token-matching flaw was live in `supersede_prior_versions` itself, which filtered by that
+> `Equal` and marked without re-checking the path — it could have superseded tiles of unrelated
+> documents. Zero were, by timing luck rather than correctness. Fixed in `eb3103e`; pinned by
+> acceptance CASE 5. See §2a below, which the fix supersedes.
+>
+> Left standing rather than rewritten, because a record that quietly edits its own wrong numbers
+> teaches nothing. **Read the thing itself, not the number about it.**
+
 > **This is a correctness defect, not hygiene.** The document that defines what production is
 > currently competes with **three stale copies of itself** on every retrieval, and gains one more
 > per edit, permanently. Nothing marks which is current.
@@ -21,8 +51,12 @@ inferred or unknown it says so.
 
 ## 1. The exhibit
 
-Exact-path query, grouping live (`is_superseded` unset/false) tiles by `doc_hash`, over all **30**
-watched `isma-core` documents:
+> **These figures are the ones the correction above retracts.** The query below is described as
+> "exact-path" and is not: `Equal` on a `tokenization=word` field matches by token. The table is
+> preserved as written so the error is legible; do not cite it.
+
+~~Exact-path query~~ **Token-matching query (this was the flaw)**, grouping live (`is_superseded`
+unset/false) tiles by `doc_hash`, over all **30** watched `isma-core` documents:
 
 | document | live versions | tiles |
 |---|---:|---:|
@@ -41,10 +75,26 @@ production?"* or *"which retrieval endpoint is canonical?"* is served a choice a
 no currency signal. Retrieval ranks by similarity, not recency, so **the stale copy can win.**
 
 ```
-# reproduce, per document
+# DO NOT USE — this is the broken form. Equal on source_file is TOKEN-based.
 { Get { ISMA_Quantum(limit:300, where:{path:["source_file"],operator:Equal,valueText:"<abs path>"})
         { doc_hash is_superseded } } }
 ```
+
+**The correct form.** Let GraphQL over-fetch, then filter the path *exactly in Python*. This is what
+`live_tiles_for` does, and what `supersede_prior_versions` failed to do:
+
+```python
+raw = gql(q)["data"]["Get"]["ISMA_Quantum"] or []      # over-fetches: token match
+tiles = [x for x in raw if x.get("source_file") == path]   # exact string equality
+live = {x["doc_hash"] for x in tiles if not x.get("is_superseded")}
+```
+
+Verified end state with this form: **7 documents, 1 live version each** — and **105 tiles** that the
+broken form would have wrongly attributed.
+
+Fields to know: `source_file`, `doc_hash`, `superseded_by` are all `tokenization=word`;
+`content_hash` is `tokenization=field` (genuinely exact). Hash fields are single tokens, so `Equal`
+on them behaves exactly in practice — **paths are the trap, not hashes.**
 
 ---
 
@@ -167,5 +217,15 @@ which parts of my judgment needed correcting:
   files** across five repos. Withdrawn.
 - I predicted `PRODUCTION.md` would end with 2 co-current versions. It has **4** — two predate the
   change entirely.
+- **The largest one, found after this package was merged: every severity figure above is unreliable.**
+  I had already learned that `Like` on `source_file` is token-based (first bullet) — and then used
+  `Equal` on the same field believing *that* was exact. It is not; the field is `tokenization=word`,
+  so both operators match by token. I diagnosed the exact trap, wrote it down, and walked into its
+  twin within the same document. The `PRODUCTION.md` "4 versions" in the bullet above is itself a
+  product of that flaw.
 
-The pattern in all four: a plausible claim about *volume* or *identity* that only counting settles.
+The pattern in all five: a plausible claim about *volume* or *identity* that only counting settles —
+and counting settles nothing if the filter is wrong. **Read the thing itself, not the number about
+it:** what broke the case open was reading a tile's *content* and finding it belonged to a different
+document, after its *timestamps* showed it had never been touched. Both times the answer came from
+the object, never from an aggregate over it.
