@@ -36,9 +36,25 @@ from isma.src.hmm.ids import content_hash  # noqa: E402
 ROOTS_FILE_ENV = "ISMA_MD_ROOTS_FILE"
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "reports" / "md_corpus_manifest.json"
 
+# Generated / scratch trees. These hold .md that nobody authored as prose, so
+# ingesting them buries authored docs under machine output in every ranking.
+#
+# What is deliberately NOT here, each measured against the live watch roots rather
+# than guessed, because this list is shared by every seat's corpus:
+#   /.claude/       — would drop 42 currently-walked AUTHORED files (skills docs)
+#                     across taeys-hands, embedding-server, training, isma,
+#                     the-conductor. Real content; excluding it is a content loss.
+#   /archive/       — would drop 507 currently-walked files across four repos. Whether
+#                     archived docs belong in the corpus is a fleet-wide question, not
+#                     a unilateral one, and it is entangled with supersession.
 EXCLUDE_SUBPATHS = (
     "/.venv/", "/site-packages/", "/node_modules/", "/.git/",
     "/.ipynb_checkpoints/", "/.peer-worktrees/", "/__pycache__/",
+    # Added 2026-08-01: measured 0 and 2 currently-walked files respectively, so
+    # these are preventive, not a removal. /.local/ matters because isma-core keeps
+    # a 295M benchmark scratch tree there holding 418 .md — widening the isma-core
+    # watch root without this would bury the canonical specs under benchmark output.
+    "/.local/", "/.pytest_cache/",
 )
 
 
