@@ -37,6 +37,12 @@
 set -u
 
 THRESHOLD="${ISMA_DISK_WARN_PERCENT:-85}"
+# The path to the Weaviate store. NOTE: this is a PATH, not necessarily a mount
+# point — df follows it to whatever filesystem actually backs it. On Mira
+# /var/spark is a directory on the root filesystem, not a separate device, so a
+# warning here is a warning about ROOT, and freeing space anywhere on that
+# filesystem helps equally. Do not read a warning from this canary as an
+# ISMA-local problem.
 DATA_PATH="${ISMA_WEAVIATE_DATA_PATH:-/var/lib/weaviate}"
 WEAVIATE_URL="${WEAVIATE_URL:-http://localhost:8088}"
 LOG="${ISMA_CANARY_LOG:-/tmp/disk_headroom_canary.log}"
@@ -128,12 +134,12 @@ note() {
 # The store being read-only is the emergency, whatever the percentage says, and it
 # is NEVER suppressed — a dedup rule that can silence an active outage is a bug.
 if [ "$WRITE_OK" -ne 0 ]; then
-  raise "ISMA DISK CRITICAL: Weaviate store is NOT ACCEPTING WRITES (probe failed, http=${code:-none}). Disk ${USED}% used, ${AVAIL} free on ${DATA_PATH}. Ingestion is failing SILENTLY while reads keep working."
+  raise "ISMA DISK CRITICAL: Weaviate store is NOT ACCEPTING WRITES (probe failed, http=${code:-none}). Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}. Ingestion is failing SILENTLY while reads keep working."
   exit 1
 fi
 
 if [ "$USED" -ge "$THRESHOLD" ]; then
-  MSG="ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%, Weaviate goes READ-ONLY at an UNVERIFIED threshold; still writable at 92% on 2026-08-01), ${AVAIL} free on ${DATA_PATH}. Writes still succeed (probe passed). Restore headroom before the cliff — past 90% every write fails silently while search stays green."
+  MSG="ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%, Weaviate goes READ-ONLY at an UNVERIFIED threshold; still writable at 92% on 2026-08-01), ${AVAIL} free on the filesystem backing ${DATA_PATH}. Writes still succeed (probe passed). Restore headroom before the cliff — past 90% every write fails silently while search stays green."
   if [ -z "$LAST_SEEN" ]; then
     raise "$MSG"                                              # crossing into the band
   elif [ "$USED" -gt "$LAST_SEEN" ]; then
