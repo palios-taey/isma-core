@@ -79,6 +79,32 @@ isma/src/query_classifier.py        isma/src/temporal_query.py
 The full field list with types and semantics is `docs/taey/ISMA_SCHEMA_REFERENCE.md`, **generated
 from the live class** — never hand-edited. Regenerate it after any schema change.
 
+### This repo's own docs are part of the data
+
+`docs/taey/` and the canonical root-level specs are ingested into ISMA so Taey can retrieve them by
+question. That only holds while **this repo is a watch root**, which the `isma-md-corpus-watch`
+service reads from an operator-local roots file — *not* from anything in this repo.
+
+**It did not hold, and the failure was silent (found 2026-08-01).** The roots file carried a line
+commented "the public repo itself" whose path was a stale private tree; `isma-core` appeared nowhere
+in it. Result: **six of Taey's eight operating procedures and all seven canonical root-level docs had
+zero tiles** — including `ISMA_PROSE_RETRIEVAL_SPEC.md`, the document every seat is told to follow
+when querying ISMA. The canonical copy was absent while a *forked* copy from another tree was
+present and retrievable, so nothing looked broken.
+
+Two things this should teach anyone auditing pointers here:
+
+- **A de-umbilical check must follow the data files a unit reads, not stop at the unit.** This
+  service's `WorkingDirectory` and `ExecStart` were both clean public paths. The private pointer was
+  one level down, in the roots file the unit loads at runtime.
+- **Presence is a filter question.** Verify with an exact `doc_hash` equality query, never by
+  searching for the doc — rank is set by the other ~1.6M tiles, so a present document can be absent
+  from the top 25, and a *different* document with a similar name can rank first and look like proof.
+
+If you widen or narrow that root, re-check coverage of the canonical specs afterwards; and note that
+`iter_md` walks recursively, so a new scratch or generated tree under this repo needs an entry in
+`EXCLUDE_SUBPATHS` (`isma/scripts/backfill_md_corpus.py`) or it will bury the authored docs.
+
 ## 4. The query surface
 
 | Route | Status |
