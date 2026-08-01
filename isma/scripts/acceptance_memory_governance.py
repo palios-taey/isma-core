@@ -209,8 +209,36 @@ def main():
               f"outcome={outcome3} (must be '{ing.ALREADY_LIVE}', never '{ing.INGESTED}'); "
               f"tiles {t_before} -> {t_after}, superseded nothing")
 
+        # ---- CASE 4: stale version live ALONGSIDE current content ------------
+        # The migration case. Current content is already live at the path, and an
+        # OLDER version of the same path is live too. Nothing needs writing, but
+        # the stale version must still be retired — otherwise every
+        # already-current document is permanently un-repairable.
+        body4 = body.replace("fixture", "fixture four")
+        p4 = canon_dir / "DOC4.md"; p4.write_text(body4)
+        assert ing.ingest_file(p4) == ing.INGESTED, "fixture setup failed"
+        H4_old = content_hash(body4)
+        p4.write_text(body4 + "\nA later revision of the same document.\n")
+        assert ing.ingest_file(p4) == ing.INGESTED, "fixture setup failed"
+        H4_new = content_hash(p4.read_text())
+        # Resurrect the old version to simulate the accumulated real-world state.
+        olds = http(f"{base}/v1/graphql", {"query":
+              '{ Get { %s(limit:100, where:{path:["doc_hash"],operator:Equal,valueText:"%s"})'
+              ' { _additional { id } } } }' % (CLASS, H4_old)})["data"]["Get"][CLASS]
+        for o in olds:
+            http(f"{base}/v1/objects/{CLASS}/{o['_additional']['id']}",
+                 {"class": CLASS, "properties": {"is_superseded": False}}, method="PATCH")
+        pre_old = live_count(base, doc_hash=H4_old)
+        outcome4 = ing.ingest_file(p4)          # unchanged content — the migration call
+        post_old = live_count(base, doc_hash=H4_old)
+        post_new = live_count(base, doc_hash=H4_new)
+        check("CASE 4 — a no-op ingest still retires stale versions at the same path",
+              outcome4 == ing.ALREADY_LIVE and pre_old > 0 and post_old == 0 and post_new > 0,
+              f"outcome={outcome4}; stale live {pre_old} -> {post_old}; current live={post_new} "
+              f"— without this, every already-current doc is permanently un-repairable")
+
         # ---- invariant sweep --------------------------------------------------
-        zero = [h for h in (H, H2) if live_count(base, doc_hash=h) == 0]
+        zero = [h for h in (H, H2, H4_new) if live_count(base, doc_hash=h) == 0]
         check("INVARIANT — no fixture document reachable at zero live tiles",
               not zero, "all fixtures have live tiles" if not zero
               else f"ZERO-LIVE for {zero} — the defect is NOT fixed")
