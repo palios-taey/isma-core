@@ -150,7 +150,7 @@ if [ "$WRITE_OK" -ne 0 ]; then
 fi
 
 if [ "$USED" -ge "$THRESHOLD" ]; then
-  MSG="ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%, Weaviate goes READ-ONLY at an UNVERIFIED threshold; still writable at 92% on 2026-08-01), ${AVAIL} free on the filesystem backing ${DATA_PATH}. Writes still succeed (probe passed). Restore headroom before the cliff — past 90% every write fails silently while search stays green."
+  MSG="ISMA DISK WARNING: ${USED}% used (warn at ${THRESHOLD}%), ${AVAIL} free on the filesystem backing ${DATA_PATH}. Writes still succeed — this alert is a HEADROOM warning, not a cliff prediction. The read-only threshold on this deployment is UNKNOWN: DISK_USE_READONLY_PERCENTAGE is NOT SET on the container (verified 2026-08-02, Weaviate 1.36.2), and the store was still accepting writes at 92% on 2026-08-01, which does not match the documented default of 90%. Do not plan against any specific number. The write probe in this canary is what actually detects read-only, every run, whatever the threshold turns out to be. Past whatever it is: every write fails SILENTLY while search stays green."
   if [ -z "$LAST_SEEN" ]; then
     raise "$MSG"                                              # crossing into the band
   elif [ "$USED" -gt "$LAST_SEEN" ]; then
