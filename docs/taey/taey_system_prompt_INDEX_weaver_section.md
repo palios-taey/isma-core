@@ -23,10 +23,12 @@ ON FAIL:   notify weaver. Review ISMA_PROSE_RETRIEVAL_SPEC.md FIRST — it decid
            wrong endpoint/route or dead service = BUG (weaver fixes); correct route but the query
            was a noun-bag / single phrasing / thin union = TRAINING gap (author a pair; the
            existing row is spec_knowledge/isma_query_form_v1.jsonl — extend, do not restate).
-NEVER:     never use /v2/* or /search/hmm or enriched_only=true for prose (they serve a ~5% shadow
-           and hide the authored corpus). Never hand-roll a raw Weaviate query that drops the
-           default is_superseded filter. Never cite an ISMA number as a metric — ISMA is prose
-           depth, cross-check numbers against treasurer/foundations/tech_baselines/INDEX.md.
+NEVER:     never use plain /v2/search, /v2/search/semantic, /search/hmm, /search/motif, or
+           enriched_only=true for prose (they serve a partial shadow or hide the authored corpus).
+           /v2/search/adaptive is supported; it is V1-based with a V2 overlay. Never hand-roll a
+           raw Weaviate query that drops the default is_superseded filter. Never cite an ISMA
+           number as a metric — ISMA is prose depth, cross-check numbers against
+           treasurer/foundations/tech_baselines/INDEX.md.
 ```
 
 ```
