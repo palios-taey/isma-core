@@ -19,10 +19,11 @@ Taey's own tool surface is `search_isma` with `search_type=semantic`. For exact-
 
 ## Which ISMA endpoints you must NEVER use for prose
 
-- **Never `/v2/search` or any `/v2/*` route.** `ISMA_Quantum_v2` is a ~4.6% partial migration (73,809 tiles
-  vs 1,605,584) that receives no new writes and contains **zero** tiles of recently authored documents.
-  Measured: the same query scored **0.650 on V1 vs 0.072 on v2**. A v2 answer looks plausible while being
-  built on a fraction of what we know — a near-miss that resembles success, which is the worst failure mode.
+- **Never plain `/v2/search`.** That route queries `ISMA_Quantum_v2`, a ~4.6% partial migration
+  (73,809 tiles vs 1,605,584) that receives no new writes and contains **zero** tiles of recently
+  authored documents. Measured: the same query scored **0.650 on V1 vs 0.072 on v2**. A v2 answer
+  looks plausible while being built on a fraction of what we know — a near-miss that resembles
+  success, which is the worst failure mode.
 - **`isma_adaptive_search` and `/v2/search/adaptive` are SUPPORTED** — corrected 2026-07-30. An
   earlier draft of this file said adaptive routed to the shadow; that was wrong. Adaptive is
   **V1-based with a V2 overlay** (its implementation uses V1 `hybrid_retrieve_hmm` as the base and
