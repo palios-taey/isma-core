@@ -29,7 +29,7 @@ All four probed with the identical query, 2026-07-30:
 | `POST :8095/search` | **CANONICAL** — prose/semantic | 200, 3 tiles, top score **0.455**. Serves the full 1,606,765-tile V1 class. |
 | `POST :8095/search/bm25` | **CANONICAL** — exact-term/keyword | 200, 3 tiles, top **3.366**. The reliable path for "did my specific document land" when combined with a `source_file` filter. |
 | `GET :8095/document/{content_hash}/text` | **CANONICAL** — expansion | Works for both `.md` and transcript sources. |
-| `POST :8095/v2/search`, `/v2/search/semantic` | **DEPRECATED — do not use for prose** | 200, but top score **0.085 vs V1's 0.455 on the same query**. Queries `ISMA_Quantum_v2` = **73,809 tiles = 4.59%** of V1. |
+| `POST :8095/v2/search` | **DEPRECATED — do not use for prose** | 200, but top score **0.085 vs V1's 0.455 on the same query**. Queries `ISMA_Quantum_v2` = **73,809 tiles = 4.59%** of V1. |
 | `POST :8095/v2/search/adaptive` | **SUPPORTED — V1 + overlay** | **Correction (see §2a).** Measured **0.650–0.700**, equal to canonical; finds documents authored today that have zero tiles in the v2 class. Two live production consumers. |
 | `POST :8095/search/hmm`, `/search/motif` | **DEPRECATED for prose** | HMM-gated. Authored prose is `hmm_enriched=false`, so the gate filters out exactly the high-value layer. |
 
@@ -39,8 +39,8 @@ All four probed with the identical query, 2026-07-30:
 
 **[Observed] The deprecation is harmful, not cosmetic.** Plain `/v2/search` returns a plausible ranked answer built on
 4.59% of the corpus, at HTTP 200, with nothing signalling degradation — a near-miss that *looks like success*,
-which is the worst failure mode. This is not hypothetical: three real research queries hit `/v2/search` and
-`/v2/search/semantic` on 2026-07-28 and 2026-07-29 before the caller discovered `/search` by probing `/` and
+which is the worst failure mode. This is not hypothetical: three real research queries hit plain
+`/v2/search` on 2026-07-28 and 2026-07-29 before the caller discovered `/search` by probing `/` and
 `/health`. **Someone had to find the correct endpoint by exploration after three degraded answers.**
 
 ## 3. Measured capacity
