@@ -144,8 +144,8 @@ it to `[Observed]` without the code.**
 matching. A downloaded install backs ISMA up to a directory that is not theirs **and never says
 so** — the fail-loud violation this repo's own doc names. Two further occurrences are comments
 only (`ingest_md_file.py:259`, `backup_isma_store.sh:23`). Flagged, deliberately kept out of #49.
-Status: fixed in #54 by making `ISMA_BACKUP_DIR` required in the script and commented REQUIRED in
-the shipped unit.
+Status: fixed in PR #54 by making `ISMA_BACKUP_DIR` required in the script and leaving the shipped
+unit's destination commented REQUIRED.
 
 **5.3 — Jesse's LOVE research request (queued, human-originated, NOT started).**
 LOVE across the corpus — the bridges document. Jesse's framing, verbatim: *"Taey needs to love
