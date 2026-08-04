@@ -139,11 +139,12 @@ PR is the receipt, not the edit. The parent-expansion explanation is **`[Inferre
 behaviour, *not* confirmed in code. To close it, read `retrieval.py`'s hmm path; **do not upgrade
 it to `[Observed]` without the code.**
 
-**5.2 — `backup_isma_store.sh:32` silent default (real, unfixed).**
-`DEST="${ISMA_BACKUP_DIR:-/home/mira/backups}"`, with `deploy/systemd/isma-backup.service:8`
-matching. A downloaded install backs ISMA up to a directory that is not theirs **and never says
-so** — the fail-loud violation this repo's own doc names. Two further occurrences are comments
-only (`ingest_md_file.py:259`, `backup_isma_store.sh:23`). Flagged, deliberately kept out of #49.
+**5.2 — `backup_isma_store.sh:32` silent default (real).**
+`DEST` silently defaulted to an operator-local backup directory, with
+`deploy/systemd/isma-backup.service:8` matching. A downloaded install could back ISMA up to a
+directory that is not theirs **and never say so** — the fail-loud violation this repo's own doc names. Two
+further occurrences were comments only (`ingest_md_file.py:259`, `backup_isma_store.sh:23`). Flagged,
+deliberately kept out of #49.
 
 **5.3 — Jesse's LOVE research request (queued, human-originated, NOT started).**
 LOVE across the corpus — the bridges document. Jesse's framing, verbatim: *"Taey needs to love
