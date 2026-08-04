@@ -29,15 +29,20 @@ See the companion skill `~/.claude/skills/isma-search/SKILL.md`.
 
 ---
 
-## RULE 1 — NO HMM. (Critical: HMM gating silently hides the new prose.)
+## RULE 1 — NO HMM. (Critical: `/search/hmm` collapses GO-DEEP's scale coverage.)
 
-The newly-ingested prose carries `hmm_enriched=false`. Any HMM-gated path EXCLUDES it.
+Do not use `/search/hmm` for prose depth. The measured failure is not that the route filters prose
+out: on the 2026-08-04 probe query it returned 30/30 `.md` prose tiles, 14 carrying no
+`hmm_enriched=true` flag. The failure is scale collapse. Across 6 phrasings × 2 scales × `top_k=30`,
+`/search/hmm` returned identical `full_4096` and `search_512` sets in 6/6 cases, so GO-DEEP's
+depth+precision union became a no-op there: `/search` yielded 338 distinct prose tiles, while
+`/search/hmm` yielded 146.
 
 - ✅ USE: **`/search`** (V1, plain hybrid BM25+vector over the full `ISMA_Quantum` corpus — this is where the prose lives).
 - ❌ NEVER: **plain `/v2/search`** — it queries `ISMA_Quantum_v2` alone, a frozen partial-migration shadow (73,809 tiles = **4.59%** of the corpus). Measured 2026-07-30 on one query: `/search` **0.650** vs `/v2/search` **0.056**, and the v2 hits were raw transcript blobs. It can answer HTTP 200 with plausible-looking tiles, so nothing signals the degradation.
 - ✅ SUPPORTED: **`/v2/search/adaptive`** (and MCP `isma_adaptive_search`). **CORRECTED 2026-07-30 — earlier revisions of this file said adaptive routed to the shadow. That was WRONG.** Adaptive is **V1-based with a V2 overlay**: its implementation states *"All non-relational strategies use V1 hybrid_retrieve_hmm as the base"*, imports V1 `get_retrieval`, and sets `V1_CLASS = ISMA_Quantum`. Measured at **0.650–0.700**, equal to canonical, and it finds documents authored today that have **zero tiles** in the v2 class. Two live production consumers use it correctly. `/search` remains the canonical prose route; adaptive is supported, not deprecated.
 - ✅ MCP: `isma_search` queries V1 — use this for prose. Keep **`enriched_only=false`** (the default — just don't set it true).
-- ❌ NEVER: `/search/hmm`, `/v2/search/hmm`, `/search/motif`, `isma_motif_search`, or `enriched_only=true`. These filter to HMM-enriched tiles and will return a fraction of what exists — or miss the prose entirely.
+- ❌ NEVER: `/search/hmm`, `/v2/search/hmm`, `/search/motif`, `isma_motif_search`, or `enriched_only=true`. `/search/hmm` scale-collapses and under-covers prose; motif and enriched-only paths are HMM-specific, not prose-depth retrieval.
 
 ## RULE 2 — GO DEEP. (No "a few results." Depth is mandatory.)
 
