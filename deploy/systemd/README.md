@@ -41,3 +41,34 @@ The broken form fails in the worst way: the canary detects correctly and invokes
 notifier, the notifier rejects the call for missing arguments, and the alert never
 arrives. Verify yours by running the unit once and confirming the alert actually
 landed — not merely that the unit ran.
+
+## isma-backup
+
+`ISMA_BACKUP_DIR` is **required**. The unit ships it commented out on purpose:
+there is deliberately no default backup destination. If it is unset, the backup
+script alerts and exits `2` rather than choosing a directory for you, because a
+backup written to the wrong place is worse than one that refuses to run.
+
+Uncomment and set it in your installed unit:
+
+```ini
+#Environment=ISMA_BACKUP_DIR=/path/to/isma-backups
+```
+
+Other knobs are:
+
+- `ISMA_STORE_PATH` — live store path; defaults to `/var/lib/weaviate`
+- `ISMA_BACKUP_RETAIN` — minimum good backups to keep; defaults to `2`
+- `ISMA_BACKUP_ALERT_CMD` — command that receives the alert text as its final
+  argument
+
+If `ISMA_BACKUP_ALERT_CMD` takes arguments, quote the whole assignment:
+
+```ini
+Environment=ISMA_BACKUP_ALERT_CMD=/usr/local/bin/mynotify --from me ops-channel    # BROKEN
+Environment="ISMA_BACKUP_ALERT_CMD=/usr/local/bin/mynotify --from me ops-channel"  # correct
+```
+
+If you already run this unit with a backup directory set, re-copying the shipped
+unit removes that setting. Set `ISMA_BACKUP_DIR` again in your installed copy
+before the next run, or the backup stops.
