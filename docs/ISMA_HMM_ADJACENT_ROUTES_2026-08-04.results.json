@@ -1,0 +1,214 @@
+{
+  "measured_at_utc": "2026-08-04T19:30:12Z",
+  "api": "http://localhost:8095",
+  "top_k": 30,
+  "scales": [
+    "full_4096",
+    "search_512"
+  ],
+  "phrasings": [
+    "CPT training sequence length decision 2560 4096 8192 which did we choose",
+    "packing scheme EOS separators document boundary attention masking decision",
+    "continued pretraining config sequence length packing decision record",
+    "27B dense CPT run GB10 unified memory sequence length chosen",
+    "why we picked the training window size for the codebase CPT",
+    "document boundary masking versus fixed block concatenation what we decided"
+  ],
+  "elapsed_seconds": 80.5,
+  "raw_runtime_json": {
+    "path": "/tmp/hmm_adjacent_routes_2026-08-04.json",
+    "sha256": "0f81673394e04d913464088b14ca67fef3e38ea0ae7453010a20eb91b10d9cd2",
+    "note": "Raw file includes returned tile payloads and was not committed; this aggregate preserves the measured receipt for spec claims."
+  },
+  "observed_code_contract": {
+    "v2_search_hmm": "V2SearchRequest has no scale field; scale in payload is ignored by the request model.",
+    "search_motif": "MotifSearchRequest requires motif_id and has no query or scale field.",
+    "mcp_isma_motif_search": "MCP tool schema requires motif_id and has no query or scale field.",
+    "http_search_enriched_only": "SearchRequest has hmm_enriched, not enriched_only; enriched_only in payload is ignored by the request model.",
+    "mcp_isma_search_enriched_only": "MCP isma_search exposes enriched_only and post-filters returned TileResult objects by t.hmm_enriched."
+  },
+  "routes": {
+    "http_search": {
+      "distinct_hashes": 295,
+      "returned": 295,
+      "distinct_md_prose": 284,
+      "content_fields": 295,
+      "source_file_fields": 295,
+      "hmm_enriched_fields": 43,
+      "hmm_enriched_true": 43,
+      "cross_scale": {
+        "overlap_sum": 2,
+        "distinct_sum": 354,
+        "md_prose_sum": 338,
+        "identical_scale_queries": 0
+      }
+    },
+    "http_v2_search_hmm": {
+      "distinct_hashes": 156,
+      "returned": 156,
+      "distinct_md_prose": 152,
+      "content_fields": 156,
+      "source_file_fields": 156,
+      "hmm_enriched_fields": 21,
+      "hmm_enriched_true": 21,
+      "observed_returned_scales": [
+        "context_2048",
+        "full_4096",
+        "search_512"
+      ],
+      "cross_scale": {
+        "overlap_sum": 174,
+        "distinct_sum": 174,
+        "md_prose_sum": 170,
+        "identical_scale_queries": 6
+      }
+    },
+    "http_search_enriched_only_extra": {
+      "distinct_hashes": 295,
+      "returned": 295,
+      "distinct_md_prose": 284,
+      "content_fields": 295,
+      "source_file_fields": 295,
+      "hmm_enriched_fields": 43,
+      "hmm_enriched_true": 43,
+      "cross_scale": {
+        "overlap_sum": 2,
+        "distinct_sum": 354,
+        "md_prose_sum": 338,
+        "identical_scale_queries": 0
+      }
+    },
+    "http_search_hmm_enriched_true": {
+      "distinct_hashes": 251,
+      "returned": 251,
+      "distinct_md_prose": 224,
+      "content_fields": 251,
+      "source_file_fields": 251,
+      "hmm_enriched_fields": 251,
+      "hmm_enriched_true": 251,
+      "cross_scale": {
+        "overlap_sum": 3,
+        "distinct_sum": 353,
+        "md_prose_sum": 323,
+        "identical_scale_queries": 0
+      }
+    },
+    "http_search_motif": {
+      "distinct_hashes": 90,
+      "returned": 90,
+      "distinct_md_prose": 0,
+      "content_fields": 0,
+      "source_file_fields": 0,
+      "hmm_enriched_fields": 0,
+      "hmm_enriched_true": 0,
+      "queries_with_no_motif": 1
+    },
+    "mcp_isma_motif_search": {
+      "distinct_hashes": 90,
+      "returned": 90,
+      "distinct_md_prose": 0,
+      "content_fields": 0,
+      "source_file_fields": 0,
+      "hmm_enriched_fields": 0,
+      "hmm_enriched_true": 0,
+      "queries_with_no_motif": 1
+    },
+    "mcp_isma_search": {
+      "distinct_hashes": 273,
+      "returned": 273,
+      "distinct_md_prose": 184,
+      "content_fields": 273,
+      "source_file_fields": 273,
+      "hmm_enriched_fields": 273,
+      "hmm_enriched_true": 178,
+      "cross_scale": {
+        "overlap_sum": 16,
+        "distinct_sum": 312,
+        "md_prose_sum": 217,
+        "identical_scale_queries": 0
+      }
+    },
+    "mcp_isma_search_enriched_only": {
+      "distinct_hashes": 178,
+      "returned": 178,
+      "distinct_md_prose": 94,
+      "content_fields": 178,
+      "source_file_fields": 178,
+      "hmm_enriched_fields": 178,
+      "hmm_enriched_true": 178,
+      "cross_scale": {
+        "overlap_sum": 16,
+        "distinct_sum": 201,
+        "md_prose_sum": 111,
+        "identical_scale_queries": 0
+      }
+    }
+  },
+  "content_hash_set_comparisons": {
+    "http_search_vs_v2_search_hmm": {
+      "identical_calls": 0,
+      "total_calls": 12,
+      "overlap_sum": 161,
+      "distinct_sum": 543
+    },
+    "http_search_vs_http_search_enriched_only_extra": {
+      "identical_calls": 12,
+      "total_calls": 12,
+      "overlap_sum": 356,
+      "distinct_sum": 356
+    },
+    "http_search_vs_http_search_hmm_enriched_true": {
+      "identical_calls": 0,
+      "total_calls": 12,
+      "overlap_sum": 48,
+      "distinct_sum": 664
+    },
+    "mcp_isma_search_vs_mcp_isma_search_enriched_only": {
+      "identical_calls": 0,
+      "total_calls": 12,
+      "overlap_sum": 217,
+      "distinct_sum": 328,
+      "only_enriched_not_in_default_sum": 0
+    }
+  },
+  "motif_assignment": [
+    {
+      "query_index": 1,
+      "motifs": [
+        "HMM.TRAINING_EVOLUTION"
+      ]
+    },
+    {
+      "query_index": 2,
+      "motifs": [
+        "HMM.CONSTRAINT_NAVIGATION"
+      ]
+    },
+    {
+      "query_index": 3,
+      "motifs": []
+    },
+    {
+      "query_index": 4,
+      "motifs": [
+        "HMM.UMA_MEMORY_MANAGEMENT"
+      ]
+    },
+    {
+      "query_index": 5,
+      "motifs": [
+        "HMM.TRAINING_EVOLUTION"
+      ]
+    },
+    {
+      "query_index": 6,
+      "motifs": [
+        "HMM.CONSTRAINT_NAVIGATION"
+      ]
+    }
+  ],
+  "http_search_motif_query_payload": {
+    "status": 422,
+    "missing_field": "motif_id"
+  }
+}

@@ -22,7 +22,8 @@ Observed:
 - Scale sweep where a route accepts a natural-language query: `full_4096` plus `search_512`
 - Comparison unit: `content_hash` sets, not counts
 - Field-presence checks: `content`, `source_file`, and `hmm_enriched`
-- JSON artifact: `/tmp/hmm_adjacent_routes_2026-08-04.json`
+- Durable aggregate artifact: `docs/ISMA_HMM_ADJACENT_ROUTES_2026-08-04.results.json`
+- Raw runtime artifact: `/tmp/hmm_adjacent_routes_2026-08-04.json` (`sha256:0f81673394e04d913464088b14ca67fef3e38ea0ae7453010a20eb91b10d9cd2`)
 
 Reproduction command:
 
