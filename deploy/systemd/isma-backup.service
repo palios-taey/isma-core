@@ -5,7 +5,13 @@ Documentation=https://github.com/palios-taey/isma-core/blob/main/docs/ISMA_PRODU
 [Service]
 Type=oneshot
 Environment=ISMA_STORE_PATH=/var/lib/weaviate
-Environment=ISMA_BACKUP_DIR=%h/isma-backups
+# REQUIRED — you must set this. Point at the directory whose backup history you
+# intend this unit to create, verify, and rotate.
+# There is deliberately no default: backup data is sole-copy-sensitive, and a
+# shipped destination silently redirects a real backup history into a fresh
+# empty directory that also appears valid.
+# Uncomment and set:
+#Environment=ISMA_BACKUP_DIR=/path/to/isma-backups
 Environment=ISMA_BACKUP_RETAIN=2
 # A live Weaviate store contains a few root-owned files (raft/db_users/users.json
 # is root:root 0600). Without privilege rsync exits 23 and the entire backup is
