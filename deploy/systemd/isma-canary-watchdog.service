@@ -1,0 +1,28 @@
+[Unit]
+Description=ISMA canary watchdog — escalates when the disk canary stops reporting
+Documentation=https://github.com/palios-taey/isma-core/blob/main/docs/ISMA_PRODUCTION_MAP.md
+
+[Service]
+Type=oneshot
+# Reads the heartbeat file and nothing else — no disk, no store, no network. This
+# is the last link in the chain and nothing watches IT, so it is kept small enough
+# to be obviously correct rather than merely tested.
+#
+# HEARTBEAT AND LOG PATHS ARE DELIBERATELY NOT SET HERE. Both this unit and
+# isma-disk-canary.service fall back to the same defaults inside the script, so
+# they cannot drift apart. Setting the path in one unit and forgetting the other
+# would make this watchdog read a file the canary never writes — and it would then
+# report the canary as DEAD, forever, while the canary was perfectly healthy. If
+# you do override them, override them in BOTH units.
+#
+# Optional: the notifier. Same quoting rule as the canary — QUOTE THE WHOLE
+# ASSIGNMENT or systemd splits on whitespace and silently drops every argument.
+#   Environment="ISMA_DISK_ALERT_CMD=/usr/local/bin/mynotify --from weaver ops-channel"
+#
+# Two missed 15-minute canary runs plus slack. If your canary timer is slower,
+# raise this to match — it must exceed the canary's interval or it will alarm on
+# a perfectly normal gap between runs.
+Environment=ISMA_CANARY_MAX_AGE_SECS=2400
+ExecStart=/bin/bash %h/isma-core/isma/scripts/disk_headroom_canary.sh --watchdog
+# Exit 1 means "the canary is down and I said so" — a true report, not a fault.
+SuccessExitStatus=0 1

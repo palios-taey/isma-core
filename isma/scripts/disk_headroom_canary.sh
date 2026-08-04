@@ -34,6 +34,14 @@
 #     emergency itself and must never be suppressed
 #   * one REMINDER per ISMA_DISK_REMIND_SECS (default 24h) while steady
 # Recovery below the threshold clears the state, so the next crossing alerts again.
+#
+# THE DEAD-MAN'S SWITCH. Everything above assumes the canary RUNS. If the timer
+# stops, nothing runs, nothing alerts, and the silence is indistinguishable from
+# all-clear — an instrument that has stopped looking reports the same thing as one
+# that looked and found nothing wrong. So the canary records a HEARTBEAT on every
+# completed observation, and `--watchdog` (a separate timer) escalates when that
+# heartbeat goes stale. Misconfiguration escalates immediately by the same logic:
+# a canary watching nothing is down, whatever its exit code says.
 set -u
 
 THRESHOLD="${ISMA_DISK_WARN_PERCENT:-85}"
@@ -55,19 +63,69 @@ REMIND_SECS="${ISMA_DISK_REMIND_SECS:-86400}"
 # canary still logs and exits non-zero, so a supervisor or timer can act on it.
 ALERT_CMD="${ISMA_DISK_ALERT_CMD:-}"
 
+# HEARTBEAT — liveness, recorded UNCONDITIONALLY on every completed observation.
+# It is deliberately NOT the alert state file: that file is deleted on RECOVERED,
+# so it disappears exactly when the disk is healthy — which is precisely when a
+# silent canary is indistinguishable from a quiet one. Liveness has to be recorded
+# on the healthy path or it does not answer the question it exists for.
+# Not /tmp by default: /tmp is cleared on reboot, and a heartbeat that vanishes on
+# every boot manufactures the alarm it exists to raise.
+HEARTBEAT="${ISMA_CANARY_HEARTBEAT:-${XDG_STATE_HOME:-$HOME/.local/state}/isma/disk_canary.heartbeat}"
+# Watchdog tolerance. The shipped timer fires every 15 min; the default allows two
+# missed runs before escalating, so a single slow or skipped cycle is not an alarm.
+MAX_AGE="${ISMA_CANARY_MAX_AGE_SECS:-2400}"
+
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
+# ---------------------------------------------------------------------------
+# WATCHDOG MODE — the dead-man's switch.
+#
+# A canary cannot report its own death: if the timer stops, the script does not
+# run, and nothing inside it can alert. Silence from a detector then reads exactly
+# like all-clear. This mode is the external observer — it never touches the disk or
+# the store, it only asks "did the canary actually look, recently?"
+#
+# It is deliberately trivial (read a file, compare an integer) because it is the
+# last link in the chain and its own failure is unwatched. THAT LIMIT IS REAL AND
+# STATED: nothing watches the watchdog. The turtles stop here, on purpose, and the
+# honest mitigation is that this path has no network, no store, and no parsing.
+if [ "${1:-}" = "--watchdog" ]; then
+  if [ ! -r "$HEARTBEAT" ]; then
+    MSG="ISMA CANARY DEAD: no heartbeat at ${HEARTBEAT}. The disk canary has not completed a run — the DISKGATE detector is not looking. Read-only would now arrive silently: search stays green while every write fails."
+  else
+    read -r HB_TS _ < "$HEARTBEAT" 2>/dev/null || HB_TS=0
+    AGE=$(( $(date +%s) - ${HB_TS:-0} ))
+    if [ "$AGE" -gt "$MAX_AGE" ]; then
+      MSG="ISMA CANARY STALE: last completed run ${AGE}s ago (limit ${MAX_AGE}s). The disk canary has stopped reporting — treat the DISKGATE detector as DOWN, not as all-clear."
+    else
+      exit 0                                   # canary is alive; say nothing
+    fi
+  fi
+  echo "$(ts) $MSG" >> "$LOG"
+  [ -n "$ALERT_CMD" ] && $ALERT_CMD "$MSG" >> "$LOG" 2>&1
+  exit 1
+fi
+# ---------------------------------------------------------------------------
+
+# Fail loud means loud TO A HUMAN, not just to a log nobody opens. A canary that
+# is misconfigured is a canary that is not watching, which is the same condition
+# the watchdog exists to escalate — so it escalates here too, immediately, rather
+# than waiting for the heartbeat to age out.
+fatal() {
+  echo "$(ts) $1" >> "$LOG"
+  [ -n "$ALERT_CMD" ] && $ALERT_CMD "$1" >> "$LOG" 2>&1
+  exit 2
+}
+
 if [ -z "$DATA_PATH" ]; then
-  echo "$(ts) CANARY CONFIG ERROR: ISMA_WEAVIATE_DATA_PATH is not set." >> "$LOG"
-  echo "$(ts)   Set it to the HOST path holding the Weaviate data. To find it:" >> "$LOG"
+  echo "$(ts)   Set ISMA_WEAVIATE_DATA_PATH to the HOST path holding the Weaviate data. To find it:" >> "$LOG"
   echo "$(ts)     docker inspect <weaviate-container> --format '{{range .Mounts}}{{.Source}}{{end}}'" >> "$LOG"
   echo "$(ts)   (that is the host side of the container's /var/lib/weaviate mount)" >> "$LOG"
-  exit 2   # fail loud: a canary watching the wrong filesystem is worse than none
+  fatal "ISMA CANARY MISCONFIGURED: ISMA_WEAVIATE_DATA_PATH is not set — the DISKGATE detector is watching nothing. See $LOG for the setting."
 fi
 
 if [ ! -e "$DATA_PATH" ]; then
-  echo "$(ts) CANARY CONFIG ERROR: ISMA_WEAVIATE_DATA_PATH '$DATA_PATH' does not exist" >> "$LOG"
-  exit 2   # fail loud: a canary watching the wrong filesystem is worse than none
+  fatal "ISMA CANARY MISCONFIGURED: ISMA_WEAVIATE_DATA_PATH '$DATA_PATH' does not exist — the DISKGATE detector is watching nothing."
 fi
 
 USED=$(df --output=pcent "$DATA_PATH" 2>/dev/null | tail -1 | tr -dc '0-9')
@@ -82,8 +140,7 @@ if [ -n "${ISMA_SIMULATE_USED:-}" ]; then
 fi
 AVAIL=$(df -h --output=avail "$DATA_PATH" 2>/dev/null | tail -1 | tr -d ' ')
 if [ -z "${USED:-}" ]; then
-  echo "$(ts) CANARY ERROR: could not read disk usage for $DATA_PATH" >> "$LOG"
-  exit 2
+  fatal "ISMA CANARY BLIND: could not read disk usage for $DATA_PATH — the DISKGATE detector is not measuring anything."
 fi
 
 # Writability probe: create then delete a real object. A percentage predicts the
@@ -100,6 +157,14 @@ if command -v curl >/dev/null 2>&1; then
     *)       WRITE_OK=1 ;;
   esac
 fi
+
+# Heartbeat: we read the disk AND ran the probe, so this run did its job. Written
+# on EVERY outcome from here down — healthy, warning, or read-only — because the
+# watchdog is asking "is the detector looking?", not "is the news good?". It is
+# NOT written above this line: a config error means the canary never observed
+# anything, and a heartbeat then would certify a canary that is watching nothing.
+mkdir -p "$(dirname "$HEARTBEAT")" 2>/dev/null || true
+echo "$(date +%s) ${USED} write_ok=${WRITE_OK}" > "$HEARTBEAT" 2>/dev/null || true
 
 # State: "<last_observed_pct> <epoch_of_last_OBSERVATION> <epoch_of_last_ALERT> <last_alerted_pct>".
 # LAST_SEEN and LAST_ALERTED are deliberately SEPARATE. Comparing a new reading

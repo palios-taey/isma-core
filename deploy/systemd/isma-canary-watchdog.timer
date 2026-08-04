@@ -1,0 +1,11 @@
+[Unit]
+Description=Check hourly that the ISMA disk canary is still reporting
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

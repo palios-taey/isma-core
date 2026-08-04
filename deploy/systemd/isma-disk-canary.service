@@ -23,6 +23,16 @@ Environment=ISMA_DISK_WARN_PERCENT=85
 # live: the canary detected correctly, invoked the notifier, and the notifier
 # rejected the call for a missing target. Detection worked; the alert path was dead.
 #   Environment="ISMA_DISK_ALERT_CMD=/usr/local/bin/mynotify --from weaver ops-channel"
+# THIS UNIT ALONE IS NOT SUFFICIENT. If its timer stops, nothing here runs and
+# nothing alerts — and silence from a stopped detector is indistinguishable from
+# silence from a healthy one. Install isma-canary-watchdog.{service,timer} as well;
+# this unit writes a heartbeat on every completed run and the watchdog escalates
+# when that heartbeat goes stale. Without it you have a canary that cannot tell you
+# it has died.
 ExecStart=/bin/bash %h/isma-core/isma/scripts/disk_headroom_canary.sh
 # A warning must not mark the unit failed forever; the timer re-runs it.
+# Exit 2 (misconfigured / cannot read the disk) is NOT listed here on purpose: it
+# means the canary is watching nothing, so the unit should go to failed state. The
+# script also raises it through ISMA_DISK_ALERT_CMD, because a failed unit nobody
+# is looking at is the same silence this whole design exists to remove.
 SuccessExitStatus=0 1
