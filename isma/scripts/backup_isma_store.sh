@@ -20,7 +20,7 @@
 #
 # Usage: backup_isma_store.sh
 # Env:   ISMA_STORE_PATH   (default /var/lib/weaviate) — the live store
-#        ISMA_BACKUP_DIR   (default /home/mira/backups)
+#        ISMA_BACKUP_DIR   (required) — directory where backups are written
 #        ISMA_BACKUP_RETAIN (default 2) — minimum good backups to keep
 #        ISMA_BACKUP_ALERT_CMD — receives the alert text as its final argument.
 #          QUOTE THE WHOLE Environment= assignment in the unit if it has
@@ -29,7 +29,7 @@
 set -u
 
 STORE="${ISMA_STORE_PATH:-/var/lib/weaviate}"
-DEST="${ISMA_BACKUP_DIR:-/home/mira/backups}"
+DEST="${ISMA_BACKUP_DIR:-}"
 RETAIN="${ISMA_BACKUP_RETAIN:-2}"
 ALERT_CMD="${ISMA_BACKUP_ALERT_CMD:-}"
 LOG="${ISMA_BACKUP_LOG:-/tmp/isma_backup.log}"
@@ -43,6 +43,7 @@ alert() {
 }
 
 [ -d "$STORE" ] || { alert "ISMA BACKUP FAILED: store path '$STORE' does not exist. Nothing was backed up."; exit 2; }
+[ -n "$DEST" ] || { alert "ISMA BACKUP FAILED: ISMA_BACKUP_DIR is required. Refusing to choose a backup directory silently."; exit 2; }
 
 STAMP=$(date +%Y%m%d-%H%M)
 TARGET="$DEST/isma-weaviate-$STAMP"
