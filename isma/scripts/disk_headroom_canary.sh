@@ -101,17 +101,33 @@ if command -v curl >/dev/null 2>&1; then
   esac
 fi
 
-# State: "<last_observed_pct> <epoch_of_last_alert> <last_alerted_pct>".
+# State: "<last_observed_pct> <epoch_of_last_OBSERVATION> <epoch_of_last_ALERT> <last_alerted_pct>".
 # LAST_SEEN and LAST_ALERTED are deliberately SEPARATE. Comparing a new reading
 # against the worst-ever value makes any re-climb below that peak invisible;
 # comparing against what we saw on the previous run makes every step upward
 # visible, which is what "worsening" has to mean for an approach to a cliff.
-# Two fields are read from legacy state for backward compatibility.
-LAST_SEEN=""; PREV_TS=0; LAST_ALERTED=""
+#
+# OBS_TS and ALERT_TS are also deliberately separate, and conflating them was a
+# real defect (fixed 2026-08-04). They answer different questions:
+#   OBS_TS   — "when did we last LOOK at the disk?"  -> the staleness guard
+#   ALERT_TS — "when did we last TELL anyone?"       -> the reminder interval
+# A single field cannot mean both: the reminder needs it frozen while steady, the
+# staleness guard needs it advanced on every run. Frozen won it, so the staleness
+# guard saw a healthy 15-minute cadence as an hour-old observation, re-armed every
+# hour, and emitted a "crossing into the band" alert at a completely unchanged
+# reading. Because STALE_SECS (1h) < REMIND_SECS (24h), the reminder branch below
+# was also UNREACHABLE — the guard blanked LAST_SEEN before it could ever be
+# tested. Observed in production: 116 warnings, 46 alerts sent, 0 REMINDER.
+LAST_SEEN=""; OBS_TS=0; ALERT_TS=0; LAST_ALERTED=""
 if [ -r "$STATE" ]; then
-  read -r LAST_SEEN PREV_TS LAST_ALERTED < "$STATE" 2>/dev/null || true
-  LAST_SEEN="${LAST_SEEN:-}"; PREV_TS="${PREV_TS:-0}"
-  LAST_ALERTED="${LAST_ALERTED:-$LAST_SEEN}"
+  read -r LAST_SEEN OBS_TS ALERT_TS LAST_ALERTED < "$STATE" 2>/dev/null || true
+  LAST_SEEN="${LAST_SEEN:-}"; OBS_TS="${OBS_TS:-0}"
+  if [ -z "$LAST_ALERTED" ]; then
+    # Legacy 3-field state "<pct> <ts> <alerted_pct>": its single timestamp was
+    # the last ALERT, so seed both from it. Self-heals to 4 fields on next write.
+    LAST_ALERTED="${ALERT_TS:-$LAST_SEEN}"; ALERT_TS="$OBS_TS"
+  fi
+  ALERT_TS="${ALERT_TS:-0}"; LAST_ALERTED="${LAST_ALERTED:-$LAST_SEEN}"
 fi
 NOW=$(date +%s)
 
@@ -122,24 +138,30 @@ NOW=$(date +%s)
 # silenced a genuine climb at 87%. A stale entry must not be allowed to suppress
 # a current reading — if we have not seen the disk recently, this reading is a
 # fresh crossing, not a continuation.
+# This reads OBS_TS — "when did we last look" — NOT the last-alert time. A steady
+# condition that is being observed every 15 minutes is not stale, however long ago
+# we last said something about it.
 STALE_SECS="${ISMA_CANARY_STALE_SECS:-3600}"
-if [ -n "$LAST_SEEN" ] && [ $((NOW - PREV_TS)) -gt "$STALE_SECS" ]; then
-  echo "$(ts) state is stale (${LAST_SEEN}% observed $((NOW - PREV_TS))s ago, limit ${STALE_SECS}s) — treating this reading as a fresh crossing" >> "$LOG"
+if [ -n "$LAST_SEEN" ] && [ $((NOW - OBS_TS)) -gt "$STALE_SECS" ]; then
+  echo "$(ts) state is stale (${LAST_SEEN}% observed $((NOW - OBS_TS))s ago, limit ${STALE_SECS}s) — treating this reading as a fresh crossing" >> "$LOG"
   LAST_SEEN=""; LAST_ALERTED=""
 fi
 
 # Emit the alert and record that we did, so the next run can dedup against it.
+# Both clocks advance: we looked, and we spoke.
 raise() {
   echo "$(ts) $1" >> "$LOG"
   [ -n "$ALERT_CMD" ] && $ALERT_CMD "$1" >> "$LOG" 2>&1
-  echo "$USED $NOW $USED" > "$STATE" 2>/dev/null || true
+  echo "$USED $NOW $NOW $USED" > "$STATE" 2>/dev/null || true
   return 0
 }
 # Condition persists unchanged. Record what we SAW so the next run compares
 # against reality rather than against the last thing that happened to alert.
+# OBS_TS advances (we looked); ALERT_TS is preserved (we stayed quiet), so the
+# reminder interval keeps counting from the last thing conductor actually saw.
 note() {
   echo "$(ts) [suppressed, no state change] $1" >> "$LOG"
-  echo "$USED $PREV_TS ${LAST_ALERTED:-$USED}" > "$STATE" 2>/dev/null || true
+  echo "$USED $NOW $ALERT_TS ${LAST_ALERTED:-$USED}" > "$STATE" 2>/dev/null || true
 }
 
 # The store being read-only is the emergency, whatever the percentage says, and it
@@ -157,7 +179,7 @@ if [ "$USED" -ge "$THRESHOLD" ]; then
     # Compared against the LAST OBSERVED reading, not the worst-ever. Every step
     # upward alerts, including a re-climb that is still below a previous peak.
     raise "WORSENING — $MSG (was ${LAST_SEEN}% on the previous check)"
-  elif [ $((NOW - PREV_TS)) -ge "$REMIND_SECS" ]; then
+  elif [ $((NOW - ALERT_TS)) -ge "$REMIND_SECS" ]; then
     raise "REMINDER — $MSG"                                   # still unresolved
   else
     note "$MSG"                                               # steady: log only
