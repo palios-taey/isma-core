@@ -147,14 +147,53 @@ fi
 # cliff; only a write tells you whether the store is already over it.
 PROBE_ID="00000000-0000-4000-8000-$(printf '%012d' $((RANDOM * RANDOM % 999999999999)))"
 WRITE_OK=1
+# PROBE_CAUSE names WHAT WAS OBSERVED, never a diagnosis the probe cannot support.
+# A failed write has several causes and this probe can only distinguish some of them.
+# Conflating them produced two false DISKGATE alarms (2026-08-20 at 94%, 2026-08-24 at
+# 67% with 583G free) — BOTH were http=000, i.e. the endpoint never answered, and
+# NEITHER was a read-only store. The first was masked by a genuine concurrent disk
+# problem and so read as corroborated; the second was only caught because attributing
+# it to disk at 67% was visibly absurd. An instrument that names a cause it did not
+# measure is worse than one that reports the symptom.
+PROBE_CAUSE="unknown"
 if command -v curl >/dev/null 2>&1; then
-  code=$(curl -s -m15 -o /dev/null -w "%{http_code}" -X POST "$WEAVIATE_URL/v1/objects" \
+  # Capture BOTH the HTTP code and curl's exit status. http=000 means no HTTP response
+  # at all; only curl's exit code distinguishes refused (7) from timeout (28) from DNS (6),
+  # and the old probe discarded it. Response body is kept — a read-only Weaviate says so
+  # in words ("store is read-only due to: resource pressure") and that string is the ONLY
+  # positive evidence of DISKGATE available here.
+  PROBE_BODY_FILE="$(mktemp 2>/dev/null || echo /tmp/canary_probe_body.$$)"
+  code=$(curl -s -m15 -o "$PROBE_BODY_FILE" -w "%{http_code}" -X POST "$WEAVIATE_URL/v1/objects" \
     -H 'Content-Type: application/json' \
     -d "{\"class\":\"ISMA_Quantum\",\"id\":\"$PROBE_ID\",\"properties\":{\"content\":\"disk headroom canary probe\",\"source_file\":\"/__canary__/disk_headroom.md\",\"scale\":\"search_512\",\"is_superseded\":false}}" 2>/dev/null)
+  curl_rc=$?
+  body="$(head -c 400 "$PROBE_BODY_FILE" 2>/dev/null | tr '\n' ' ')"
+  rm -f "$PROBE_BODY_FILE" 2>/dev/null
+
   case "$code" in
-    200|201) WRITE_OK=0
-             curl -s -m15 -o /dev/null -X DELETE "$WEAVIATE_URL/v1/objects/ISMA_Quantum/$PROBE_ID" 2>/dev/null ;;
-    *)       WRITE_OK=1 ;;
+    200|201)
+      WRITE_OK=0; PROBE_CAUSE="ok"
+      curl -s -m15 -o /dev/null -X DELETE "$WEAVIATE_URL/v1/objects/ISMA_Quantum/$PROBE_ID" 2>/dev/null ;;
+    000)
+      # No HTTP response. The store may be perfectly healthy and simply unreachable —
+      # this says NOTHING about disk and must never be reported as a disk condition.
+      WRITE_OK=1
+      case "$curl_rc" in
+        7)  PROBE_CAUSE="unreachable: connection refused (curl 7) — service down or not listening" ;;
+        28) PROBE_CAUSE="unreachable: timed out after 15s (curl 28) — service hung or overloaded" ;;
+        6)  PROBE_CAUSE="unreachable: host not resolved (curl 6) — WEAVIATE_URL wrong or DNS down" ;;
+        *)  PROBE_CAUSE="unreachable: no HTTP response (curl rc=$curl_rc)" ;;
+      esac ;;
+    *)
+      WRITE_OK=1
+      # The store ANSWERED and refused. Only here can DISKGATE be evidenced, and only
+      # by the store saying so — read-only is a claim the store makes, not one we infer.
+      case "$body" in
+        *"read-only"*|*"read only"*|*"resource pressure"*)
+          PROBE_CAUSE="READ-ONLY: store refused the write (http=$code) — $body" ;;
+        *)
+          PROBE_CAUSE="write refused (http=$code) — $body" ;;
+      esac ;;
   esac
 fi
 
@@ -232,7 +271,18 @@ note() {
 # The store being read-only is the emergency, whatever the percentage says, and it
 # is NEVER suppressed — a dedup rule that can silence an active outage is a bug.
 if [ "$WRITE_OK" -ne 0 ]; then
-  raise "ISMA DISK CRITICAL: Weaviate store is NOT ACCEPTING WRITES (probe failed, http=${code:-none}). Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}. Ingestion is failing SILENTLY while reads keep working."
+  # The headline names the OBSERVED condition, not a guessed cause. Only the read-only
+  # branch may claim DISKGATE, because only there did the store itself say so. Disk usage
+  # is reported as CONTEXT on every variant — never as the diagnosis — because at 67% with
+  # 583G free "DISK CRITICAL" sent a real write outage to the wrong lane for an hour.
+  case "$PROBE_CAUSE" in
+    READ-ONLY*)
+      raise "ISMA STORE READ-ONLY: Weaviate refused the write and reported read-only. ${PROBE_CAUSE}. Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}. Ingestion is failing SILENTLY while reads keep working. THIS IS THE DISKGATE CONDITION." ;;
+    unreachable*)
+      raise "ISMA WRITE ENDPOINT UNREACHABLE: the write probe got NO HTTP RESPONSE, so the store's state is UNKNOWN — it may be healthy and simply unreachable. ${PROBE_CAUSE}. THIS IS NOT EVIDENCE OF A DISK PROBLEM: disk is ${USED}% used with ${AVAIL} free, reported as context only. Check the Weaviate service and the path to ${WEAVIATE_URL} before considering disk. Ingestion is failing SILENTLY while reads may still work." ;;
+    *)
+      raise "ISMA WRITE REFUSED: the store answered and rejected the write, cause not established as disk. ${PROBE_CAUSE}. Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}, reported as context only. Ingestion is failing SILENTLY while reads keep working." ;;
+  esac
   exit 1
 fi
 
