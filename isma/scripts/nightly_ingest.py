@@ -355,6 +355,13 @@ def process_incoming(state, check_only=False):
         else:
             log.info("Skipping unsupported incoming transcript file: %s", file_path.name)
 
+        # NOTE: this move is NOT gated on parse success -- it is a sibling of the
+        # `if success:` block above, not inside it. So a file dropped in
+        # incoming/transcripts is RELOCATED to incoming/processed/YYYYMMDD even when
+        # its parse failed and nothing was ingested. That makes this directory unsafe
+        # for anything under a preservation or custody hold: staging evidence here to
+        # "keep it safe" scatters it out of its recorded location while ingesting
+        # nothing. Raised by treasurer-codex. See issue #59.
         if not check_only:
             archive.mkdir(parents=True, exist_ok=True)
             shutil.move(str(file_path), archive / file_path.name)
