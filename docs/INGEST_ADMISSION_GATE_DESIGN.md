@@ -281,6 +281,65 @@ non-sensitive metrics. This repo already runs that pattern for the disk canary a
 
 ---
 
+## 6b. Integration with `MEMORY_GOVERNANCE.md` — extend, never duplicate
+
+> **Added post-merge.** The merged design had **zero** references to `MEMORY_GOVERNANCE.md` while
+> naming the duplicated `_QUARANTINE_HASHES` pair as the read-side prior art. That is the *small*
+> mechanism; the audited one went unmentioned, so an implementer could read §6 and conclude the only
+> prior art is a hardcoded hash set. Raised here and independently confirmed by treasurer-codex, whose
+> `git blame` attributes the policy and its implementation mapping to Jesse-authored commits from
+> `35715c5`, with merge `692f134` shipping the governed write, validity/supersede, decay and retrieval
+> paths. **This is canonical policy, not an informal note.**
+
+### The two layers answer different questions at different times
+
+| | admission (this design) | `MEMORY_GOVERNANCE.md` |
+|---|---|---|
+| when | **before** any effect — read, parse, copy, embed, write | **at** the durable write **and after** it |
+| decides | may this *source* produce effects at all | may this content enter durable memory, and what stays valid |
+| keyed on | source identity + lineage (§4, §5) | write eligibility, ownership scope, provenance; then `is_superseded`, `correction_status`, `provenance_hash` |
+
+**Admission is NECESSARY but not SUFFICIENT write authorization.** `MEMORY_GOVERNANCE.md` §1 governs
+the write boundary itself — what may enter durable memory, and a **verify-before-write gate** — plus
+ownership scope recorded on the item and provenance on every durable write. So a write proceeds only
+when **both** succeed: admission authorizes the *source and effect*, governance validates the *content
+and its provenance*. An admit is not a licence to write.
+
+*(v1 of this amendment said governance acts "over the lifecycle of items already written." That was
+wrong and made governance purely post-write.)*
+
+**The existing-item case, stated explicitly:** denying or holding a *source* stops new effects from
+that source. It does **not** mutate an existing tile's validity, retrieval eligibility, correction
+state, or history — those remain governed independently, under governance's own rules.
+
+### The specific hazard, which has already happened here once
+
+`MEMORY_GOVERNANCE.md` states that only currently-valid items are retrieved and that a superseded item
+is **excluded from retrieval immediately** — and, the part most easily lost, that superseded items are
+**preserved, not destroyed**, because the temporal-chain and audit paths deliberately traverse them.
+A hard supersede is permitted *only* when the write carries a **refuter**: who declared the old tile
+wrong, against what source, and when.
+
+On 2026-07-03 a parallel event-sourced authority layer was built in this repo without reconciling
+against that model, and a full DCM council **blocked** it — split-brain, where a tile read
+`is_superseded=true` in Weaviate while the new ledger considered it current, plus a fail-loud →
+fail-open regression. An admission gate sits close enough to that territory for the same mistake to be
+available to a careful implementer.
+
+### Requirements
+
+1. **No second currentness authority.** No independently-current ledger, store, or daemon beside the
+   governed tile record. Admission decisions are recorded (§6a) as *decisions*, never as a competing
+   statement about what is valid.
+2. **Use the existing tile fields and transition hooks**, or an explicitly **atomic** reconciled
+   extension of them.
+3. **Any cross-layer conflict, or an incomplete reconciliation, refuses** — consistent with §6.
+4. **Admission is not a path around the refuter requirement.** An admit authorizes a write to be
+   *attempted*; it does not license a hard supersede, which still needs its refuter and its
+   `CORRECTION` event.
+5. **Admission must not weaken the history exception.** Refusing a *source* is not a licence to remove
+   or hide already-governed items; supersession and deletion remain governance's, under its rules.
+
 ## 7. Scope of an admit
 
 **An admit authorizes ingestion into the named sink for the named purpose and nothing else** — not
@@ -309,6 +368,35 @@ Measured residue today, with the store filter used only as a prefilter because `
 2. **Lineage representation undecided** — requirements settled (§5); the record/edge-set choice
    belongs to whoever reads the actual producers.
 3. **Production authentication topology** after §2's boundary — **Unknown**.
+4. **`ingest_md_file.supersede_prior_versions` is a SECOND, UNGOVERNED SUPERSESSION AUTHORITY, and it
+   is fail-open.** This is a pre-implementation blocker, not covered behaviour. Measured on the
+   committed source:
+
+   | | `ingest_md_file.py` (prose path) | `isma_core.py` (governed path) |
+   |---|---|---|
+   | `refuter` | **0** | 25 |
+   | `correction_status` | **0** | 11 |
+   | `CORRECTION` | **0** | 2 |
+   | `provenance_hash` | **0** | 11 |
+
+   It PATCHes `is_superseded=True` + `superseded_by` directly (`:279-284`) with none of the fields
+   `MEMORY_GOVERNANCE.md` §3 requires for a hard supersede, and it is reached both on already-live
+   repair (`:338`) and after a completed write (`:419`). **And it is fail-open at three points:**
+   lookup failure returns `[]` (`:246-254`), individual PATCH failures are logged and the loop
+   continues (`:276-292`), and the caller **discards the returned count** before `return INGESTED`
+   (`:414-421`). A run in which every supersede PATCH failed still reports `INGESTED`.
+
+   So §6b requirements 3 and 4 are **not** true of the production prose path today, and observation 18
+   requires that exact path to keep working. Resolve one of two ways before implementation:
+   **(a)** classify same-path/path-move retirement as a distinct *governed revision* transition and
+   stop using the hard-supersede fields for it; or **(b)** route it through the hard-correction hook
+   with an authenticated refuter, provenance, and a `CORRECTION` event. Either way **reconciliation
+   failure must fail the workflow.**
+
+5. **UNSETTLED, and the design must decide rather than assume:** is document-version retirement
+   semantically different from fact correction? The code currently says *yes* (no refuter) while
+   encoding it with the same retrieval-hard `is_superseded=true` state that governance reserves for a
+   refuted correction. Those cannot both be right.
 
 ---
 
@@ -335,4 +423,16 @@ Measured residue today, with the store filter used only as a prefilter because `
 13. `ingest.embed` / `search.embed` / `probe.embed` credentials **reject cross-purpose use**, while
     `/search` and the embed canary **remain functional** — the observation that would have caught
     v3's rule taking down the read path.
-14. Existing prose ingest still works under an explicit admit rule.
+14. **Cross-layer:** an admitted write followed by a revision and then a hard correction behaves per
+    `MEMORY_GOVERNANCE.md` — revision keeps the prior visible but advisory; hard supersede carries its
+    refuter and emits its `CORRECTION` event.
+15. **Deny/hold interacts correctly with existing validity state**, and default retrieval exclusion is
+    unchanged by admission.
+16. **History and audit paths still traverse superseded items** with admission in place.
+17. **No state can be current in one authority and stale in the other** — demonstrated, not asserted.
+18. Existing prose ingest still works under an explicit admit rule — demonstrated by pushing a
+    **changed same-path document through `ingest_md_file` itself**, and showing the resulting
+    revision-or-correction receipt and a successful history traversal. A green ingest is not the
+    observation; the governance receipt is.
+19. **A forced reconciliation failure in `supersede_prior_versions` fails the workflow** rather than
+    returning `INGESTED`.
