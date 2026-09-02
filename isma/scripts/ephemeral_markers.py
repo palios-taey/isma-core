@@ -2,8 +2,15 @@
 
 Anything that writes a short-lived object into ``ISMA_Quantum`` MUST register its
 marker here. This is not documentation: ``validate_production.py`` builds its
-residue detectors from it, and ``check_marker_registry.sh`` FAILS when a production
-source file contains a marker literal that is not listed.
+residue detectors from it, and ``.github/workflows/marker-registry.yml`` runs both
+``validate_marker_registry.py`` (schema, and every marker present in its declared
+writer) and ``check_marker_registry.sh`` (every production marker literal registered)
+on every pull request, with a negative-control step proving the gate can fail.
+
+That workflow was added only after review found the enforcement missing: this docstring
+previously asserted the script "FAILS CI" while nothing under ``.github`` invoked it --
+a label promising a guarantee no mechanism provided, in the file written to prevent
+exactly that.
 
 That gate is the point. ``/__canary__/`` was absent from a hand-maintained detector
 list for as long as the list existed and was only found in review. A registry nobody

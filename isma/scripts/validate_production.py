@@ -223,7 +223,7 @@ def main():
         rows, off = [], 0
         while True:
             d = gql(a.weaviate, '{ Get { ISMA_Quantum(limit:%d, offset:%d, where:{path:["%s"],'
-                                'operator:Like,valueText:"%s"}) { source_file authority } } }'
+                                'operator:Like,valueText:"%s"}) { source_file authority _additional { id } } } }'
                                 % (PAGE, off, prop, prefilter))
             page = d["data"]["Get"]["ISMA_Quantum"] or []
             rows.extend(page)
@@ -253,36 +253,55 @@ def main():
     # So each detector is proven against an object carrying its OWN exact marker, and only
     # THIS run's sentinel id is excluded from the residue count: a sentinel left behind by a
     # killed earlier run is residue, and must be reported as such.
-    residue, blind = {}, []
+    residue, blind, cleanup_failed = {}, [], []
     for label, prop, prefilter, exact in DETECTORS:
         sid = str(uuid.uuid4())
-        sentinel_val = f"{exact}__sentinel_{sid[:8]}" if prop == "authority" else f"{exact}sentinel_{sid[:8]}.md"
+        # The sentinel must carry the REAL marker so the actual predicate is exercised,
+        # and it is identified by its OBJECT ID -- not by an 8-char fragment embedded in
+        # a property. A substring is not an identity: it cannot distinguish this run's
+        # sentinel from anything else that happens to contain those characters.
+        sv = f"{exact}sentinel_{sid[:8]}.md" if prop == "source_file" else f"{exact}__sentinel_{sid[:8]}"
         try:
             body = {"class": "ISMA_Quantum", "id": sid, "properties": {
                 "content": f"ephemeral residue-detector sentinel {sid}",
-                "source_file": sentinel_val if prop == "source_file" else f"/__sentinel__/{sid}.md",
-                "authority": sentinel_val if prop == "authority" else "advisory",
+                "source_file": sv if prop == "source_file" else f"/__sentinel__/{sid}.md",
+                "authority": sv if prop == "authority" else "advisory",
                 "scale": "search_512", "is_superseded": False}}
             urllib.request.urlopen(urllib.request.Request(
                 f"{a.weaviate}/v1/objects", data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json"}), timeout=30)
 
             rows = _page_all(prop, prefilter)
-            seen_sentinel = any(sid[:8] in (r.get(prop) or "") for r in rows)
-            if not seen_sentinel:
+            rid = lambda r: ((r.get("_additional") or {}).get("id") or "")
+            if not any(rid(r) == sid for r in rows):
                 blind.append(f"{label}({prop}+Like {prefilter})")
                 continue
-            # residue = exact-marker rows that are NOT this run's sentinel
             residue[label] = sum(1 for r in rows
-                                 if exact in (r.get(prop) or "") and sid[:8] not in (r.get(prop) or ""))
+                                 if exact in (r.get(prop) or "") and rid(r) != sid)
         except Exception as e:
             residue[label] = f"ERROR: {e}"
         finally:
+            # CLEANUP IS A VALIDATION RESULT, NOT A BEST EFFORT. The sentinel was excluded
+            # from the residue count above; if its DELETE silently failed, this run would
+            # report zero while having just created a new production object. So the delete
+            # is verified by exact-ID absence and any unresolved status turns the run red.
             try:
                 urllib.request.urlopen(urllib.request.Request(
                     f"{a.weaviate}/v1/objects/ISMA_Quantum/{sid}", method="DELETE"), timeout=30)
             except Exception:
                 pass
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{a.weaviate}/v1/objects/ISMA_Quantum/{sid}"), timeout=30)
+                cleanup_failed.append(f"{label}:{sid} still present after DELETE")
+            except urllib.error.HTTPError as he:
+                if he.code != 404:
+                    cleanup_failed.append(f"{label}:{sid} unresolved status {he.code}")
+            except Exception as e:
+                cleanup_failed.append(f"{label}:{sid} cleanup unverifiable: {e}")
+
+    check("sentinel cleanup verified by object id", not cleanup_failed,
+          f"{cleanup_failed or 'all sentinels confirmed absent (404) after DELETE'}")
 
     check("residue detectors proven live against their own markers",
           not blind, f"blind: {blind or 'none'} "
