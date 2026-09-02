@@ -44,7 +44,7 @@ layer out. The covered effects, all verified in source:
 | remote transcript transfer | `nightly_ingest.py:238` (Mac), `:264` (Jetson) | `rsync` lands content in staging **before** anything can evaluate it |
 | parse → new durable copy | `nightly_ingest.py:211-215` → `PARSED_DIR` | no boundary at all; this is the copy #59 restores |
 | incoming move/copy | `:321`, `:335`, `:342` | moves originals and copies corpus regardless of parse outcome |
-| embedding | `EMBEDDING_URL`, called from **12 files** | a raw network endpoint reachable by anything on the host |
+| embedding | five real call sites, three purposes (§2a) | a raw network endpoint reachable by anything on the host |
 | protected-class write | seven sites (§3) | raw `POST` reachable by anything with the endpoint |
 
 **Requirement.** Either **(a)** the admission service owns the complete source adapter and is the only
@@ -54,6 +54,34 @@ requires a signed capability (§4) with raw access denied at the filesystem and 
 
 Mechanical repository gates must cover **direct parser invocation, protected copies, and embedding
 calls** — not only raw `ISMA_Quantum` POSTs.
+
+### 2a. Embedding is three different jobs, and one rule for all of them breaks production
+
+> **v3 said `EMBEDDING_URL` is "called from 12 files." That was a `grep -l` reference count presented
+> as callers — the same reference-vs-call error that produced v1's §2, repeated in the document that
+> corrects it.** treasurer-codex caught it. Enumerated by reading the call sites:
+
+| site | purpose |
+|---|---|
+| `ingest_md_file.py:102` | **ingest** — embeds tile content for a corpus write |
+| `hmm_store_results.py:223` | **ingest** — embeds rosetta text for a tile write |
+| `retrieval.py:235` (`_get_embedding`), `:249` | **search** — embeds a *query string* for `/search` |
+| `embed_canary_healthcheck.sh:11` | **probe** — a fixed health string; hardcodes the URL, which is why a `EMBEDDING_URL`-symbol scan misses it |
+| `demo/setup_demo.py:74` | non-production |
+
+**Five production call sites, not twelve, and they are not the same job.** §2's rule as written — only
+the admission service may call the embedding service — would break `/search` and the embed canary,
+neither of which is corpus ingest. That is a design that takes down the read path.
+
+**Requirement: separate authenticated scopes at the boundary, not one principal.**
+
+- `ingest.embed` — requires a bound admission effect capability (§4).
+- `search.embed` — accepts ephemeral query embeddings under its own privacy/retention contract, and
+  **cannot write corpus**.
+- `probe.embed` — the fixed health probe only.
+- benchmark/demo — non-production topology.
+
+**A credential that can perform search or probe embedding must not be reusable for ingest content.**
 
 **Remote sources cannot be admitted after transfer.** `rsync` *is* the effect. Admission must happen
 producer-side, or against a **signed remote manifest**, before bytes move.
@@ -103,12 +131,22 @@ snapshot before parse, embed, or write.
 snapshot and stamps it on the receipt. Letting the caller name a revision invites **stale-policy
 pinning** — asking to be judged by an old rulebook. *(This was wrong in v2's §3 table.)*
 
-**`AdmissionDecision` / capability** — signed or service-internal, **single-use, non-replayable,
-short-lived**, bound to: `source_kind` + immutable source version handle + complete lineage proof +
-`sink`/`purpose` + the policy revision it was decided under + expiry and nonce.
+**`AdmissionDecision` — a workflow grant, not one token.** v3 called the capability *single-use*
+and then required every downstream stage to present it, which is self-contradictory: presenting the
+same token at stage 2 is indistinguishable from replaying it after stage 1 consumed it. One admitted
+document also fans out into *many* embed calls and *many* tile writes, so one-use semantics cannot
+represent the real effect graph.
 
-Every downstream stage — parse, copy, embed, write — **refuses a missing, mismatched, replayed, or
-expired capability.**
+So the root decision **mints attenuated, stage-specific child capabilities** (or an equivalent
+service-internal state machine). Each child is one-use and bound to: `decision_id` + effect kind and
+index + the immutable input digest/handle + an **allowed effect budget** + `sink`/`purpose` + expiry
+and nonce. Children are **consumed atomically**, and each stage's authenticated output digest is
+**chained into the next stage's input**. **Fan-out counts and batch bounds are declared up front**, so
+an admitted document cannot authorize arbitrary extra embeds or writes. **The root grant is never
+replayed at a stage.**
+
+Every downstream stage — parse, copy, embed, write — **refuses a missing, mismatched, replayed,
+expired, out-of-budget, or wrong-stage capability.**
 
 - **Repo documents:** open the attested **git blob** (`repo+commit+path`). A worktree path is mutable
   and cannot be the thing opened.
@@ -117,7 +155,9 @@ expired capability.**
 - **The query API is the sharp case:** FastAPI reads and parses the content-bearing request body
   before handler code runs, so admission metadata must be authenticated **out-of-band** — a check
   inside the handler is already too late.
-- **A content digest may bind bytes against TOCTOU without becoming the policy identity.** These are
+- **A content digest MUST bind the bytes whenever the immutable source handle does not itself
+  cryptographically commit to them** — "may" would leave the TOCTOU closure optional. It binds
+  bytes **without becoming the policy identity.** These are
   different jobs: identity decides *whether*, the digest proves *the same bytes*. Conflating them
   reintroduces content-keyed policy, which §7 rejects.
 
@@ -173,6 +213,41 @@ sync by a "must match" comment, is the prior art for why.
 
 ---
 
+## 6a. Decision receipts, `HELD`, and liveness — normative, not verification-only
+
+> **v3 REGRESSED this.** v2 carried the custodian's contract — a durable receipt for every decision,
+> minimized identifiers, `HELD = refuse-AND-ALERT`, and a per-decision liveness signal. My v3 rewrite
+> reduced all of it to one table row and pushed heartbeats into the observation list. Measured across
+> the two revisions: `refuse-AND-ALERT` 1 → **0**, `decision records` 1 → **0**. treasurer-codex
+> caught it. **Same mechanism as v1→v2 losing `disk_headroom_canary.sh`: a wholesale rewrite drops
+> content that a targeted edit would have kept.** Twice now, so it is a property of how I revise, not
+> an accident — v4 was applied as edits.
+
+**Every decision — admit and refusal alike — writes a durable receipt** containing: the policy
+revision it was decided under, the rule that matched, an **opaque/minimized** subject identifier, a
+reference to the complete-lineage proof, `sink`/`purpose`, the workflow and effect identifiers (§4),
+timestamp, and outcome. **It contains no content and no private reason.** If the receipt cannot be
+written, admission **refuses** — an unrecordable decision is not a decision.
+
+**`HELD` refuses AND alerts** (tutor). The reasoning stands unchanged and is the strongest argument in
+this document:
+
+> A silent refusal is indistinguishable from a gate that never fired. If `HELD` refuses silently, then
+> *"the gate is working and correctly refusing nothing"* and *"the gate is broken and refusing
+> nothing"* produce identical observations, forever.
+
+**Alerts, receipts, heartbeats and canaries must not leak held identities** — the same constraint as
+the published projection in §6. An alert that names what is held discloses what the hold protects.
+
+**Liveness is a design requirement here, not merely something to observe later.** Refusals are rare by
+design, so their absence is the steady state and cannot be a liveness signal; and an idle-healthy
+service and a stopped one emit identical silence, while a service can heartbeat contentedly with an
+adapter bypassing it. So the design requires **both**: a **fixed-cadence service heartbeat**, and
+**scheduled end-to-end admission canaries through every source adapter and effect boundary**, emitting
+non-sensitive metrics. This repo already runs that pattern for the disk canary and its watchdog.
+
+---
+
 ## 7. Scope of an admit
 
 **An admit authorizes ingestion into the named sink for the named purpose and nothing else** — not
@@ -220,4 +295,11 @@ Measured residue today, with the store filter used only as a prefilter because `
 10. **Liveness:** fixed-cadence service heartbeat **plus** scheduled end-to-end admission canaries
     through each adapter. A heartbeat alone cannot distinguish idle-healthy from stopped, and a
     service can heartbeat happily while an adapter bypasses it entirely.
-11. Existing prose ingest still works under an explicit admit rule.
+11. A workflow **cannot reuse a child capability at another stage**, **exceed its declared effect
+    budget**, or **alter the chained digest** between stages.
+12. `HELD` produces **both** a refusal receipt **and** a privacy-safe alert — and neither names the
+    held identity.
+13. `ingest.embed` / `search.embed` / `probe.embed` credentials **reject cross-purpose use**, while
+    `/search` and the embed canary **remain functional** — the observation that would have caught
+    v3's rule taking down the read path.
+14. Existing prose ingest still works under an explicit admit rule.
