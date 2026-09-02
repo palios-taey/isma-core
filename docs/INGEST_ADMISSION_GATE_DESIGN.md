@@ -1,8 +1,8 @@
-# ISMA ingest admission gate — design v3
+# ISMA ingest admission gate — design v5
 
 **Status:** design, not implemented. Owner: weaver. Raised by treasurer-codex, relayed by tutor.
-Custodian answers from tutor. Reviewed to BLOCK twice by treasurer-codex; **v3 answers blockers A–D
-on `1011983`.**
+Custodian answers from tutor. **Reviewed to BLOCK four times by treasurer-codex; v5 answers
+blockers H–I on `3943b33`.** Blockers A–D closed in v3, E–G in v4.
 
 **Read #59 first.**
 
@@ -15,9 +15,11 @@ on `1011983`.**
 | v1 | Claimed **one** corpus write choke point, labelled "verified, not assumed." An enumeration regex required `.post(` and the URL on the same line; the calls are multi-line. **treasurer** |
 | v1→v2 | The correction **dropped** `disk_headroom_canary.sh`, which the original text had listed. Seven writers, not six. **treasurer-codex** |
 | v2 | Put the decision at the **corpus write**, which does not govern the `PARSED_DIR` copy #59 restores, and arrives after content reaches the embedding service. **treasurer-codex** |
-| v3 | *(this revision)* Applied "boundary, not helper" to Weaviate **only**, leaving every other side effect a convention; no binding between admitted metadata and the bytes later processed; lineage modelled as a chain when it is a DAG; liveness that cannot distinguish idle from stopped or from bypassed. **treasurer-codex** |
+| v2→v3 | Applied "boundary, not helper" to Weaviate **only**; no binding between admitted metadata and the bytes processed; lineage modelled as a chain when it is a DAG; liveness that cannot distinguish idle from stopped from bypassed. **treasurer-codex** |
+| v3→v4 | A capability that is both *single-use* and *presented at every stage*; the rewrite **dropped** v2's HELD/audit contract; `EMBEDDING_URL` "12 files" was a reference count, and one rule for all embedding would have broken `/search`. **treasurer-codex** |
+| v4→v5 | *(this revision)* The "complete" five-site embedding inventory **omitted three** production calls — including one v2 had cited and my own edit dropped; §2 still contradicted §2a on principals; the artifact still called itself v3. **treasurer-codex** |
 
-**Four rounds, four load-bearing errors, none of them found by me.** That is the honest status of this
+**Five rounds, and every load-bearing error was found by a reviewer, never by me.** That is the honest status of this
 document: treat its claims as reviewed, never as verified by its author.
 
 ---
@@ -48,9 +50,16 @@ layer out. The covered effects, all verified in source:
 | protected-class write | seven sites (§3) | raw `POST` reachable by anything with the endpoint |
 
 **Requirement.** Either **(a)** the admission service owns the complete source adapter and is the only
-OS identity permitted to write staging / `PARSED_DIR` / corpus, and the only network principal
-permitted to call the embedding and store services; or **(b)** every parse, copy, embed and write
-requires a signed capability (§4) with raw access denied at the filesystem and network boundary.
+OS identity permitted to write staging / `PARSED_DIR` / corpus, and the only principal permitted to
+**write the protected class**; or **(b)** every parse, copy, embed and write requires a signed
+capability (§4) with raw access denied at the filesystem and network boundary.
+
+**The store and the embedding service are governed differently, and conflating them is a design
+error** — v4 said the admission service is "the only network principal permitted to call the embedding
+and store services," which contradicted §2a and would have broken the read path. Corpus **writes** have
+one authorized principal. **Embedding accepts purpose-scoped principals** (§2a): only `ingest.embed`
+requires an admission effect capability; `search.embed` and `probe.embed` remain functional and cannot
+write corpus.
 
 Mechanical repository gates must cover **direct parser invocation, protected copies, and embedding
 calls** — not only raw `ISMA_Quantum` POSTs.
@@ -61,17 +70,41 @@ calls** — not only raw `ISMA_Quantum` POSTs.
 > as callers — the same reference-vs-call error that produced v1's §2, repeated in the document that
 > corrects it.** treasurer-codex caught it. Enumerated by reading the call sites:
 
-| site | purpose |
-|---|---|
-| `ingest_md_file.py:102` | **ingest** — embeds tile content for a corpus write |
-| `hmm_store_results.py:223` | **ingest** — embeds rosetta text for a tile write |
-| `retrieval.py:235` (`_get_embedding`), `:249` | **search** — embeds a *query string* for `/search` |
-| `embed_canary_healthcheck.sh:11` | **probe** — a fixed health string; hardcodes the URL, which is why a `EMBEDDING_URL`-symbol scan misses it |
-| `demo/setup_demo.py:74` | non-production |
+| site | purpose | how it names the endpoint |
+|---|---|---|
+| `ingest_md_file.py:102` | **ingest** — tile content for a corpus write | `EMBEDDING_URL` |
+| `hmm_store_results.py:223` | **ingest** — rosetta text for a tile write | `EMBEDDING_URL` |
+| `query_api.py:973` | **ingest** — session tile, before its write at `:1031` | `EMBEDDING_URL`, on a line *after* the `.post(` |
+| `isma_core.py:581` | **ingest** — event/tile content, before its write at `:1253` | **reconstructed** from `EMBEDDER_HOST`/`EMBEDDER_PORT` |
+| `retrieval.py:235` (`_get_embedding`), `:249` | **search** — a *query string* for `/search` | `EMBEDDING_URL` |
+| `embed_canary_healthcheck.sh:11` | **probe** — fixed health string | hardcoded literal URL |
+| `validate_production.py:117` | **probe** — validation probe | `f"{a.embed}/v1/embeddings"` |
+| `demo/setup_demo.py:74` | non-production | — |
 
-**Five production call sites, not twelve, and they are not the same job.** §2's rule as written — only
-the admission service may call the embedding service — would break `/search` and the embed canary,
-neither of which is corpus ingest. That is a design that takes down the read path.
+> **THIS INVENTORY IS NOT AUTHORITATIVE AND MUST NOT BE TREATED AS COMPLETE.** v4 published a
+> "five production call sites" list as though it were exhaustive; three were missing, two of them
+> **corpus-ingest paths**. The three misses had three *different* causes, which is the point:
+> `query_api.py:973` puts `EMBEDDING_URL` on a line after the `.post(` — the same multi-line blindness
+> that produced v1's §2, for the third time; `isma_core.py:581` **reconstructs** the URL from
+> `EMBEDDER_HOST`/`EMBEDDER_PORT`, so no `EMBEDDING_URL` scan of any quality can see it; and
+> `validate_production.py:117` uses yet another alias. `query_api.py:973` was additionally cited in
+> **v2** and dropped by my own v4 edit. treasurer-codex found all three and deliberately declined to
+> declare a new total, because doing so would repeat the error with a bigger grep.
+
+**Requirement — the inventory must be mechanically regenerable, or explicitly labelled
+non-exhaustive.** A hand-maintained list of call sites is the `_QUARANTINE_HASHES` failure again: it
+is correct on the day it is written and silently wrong afterwards.
+
+**And the gate must fail on a NEW REPRESENTATION of the endpoint, not merely on the known ones.** Any
+fresh way of naming the embedding or store endpoint — a new alias, a reconstructed URL, a new host
+variable — must **fail the mechanical repository gate** rather than quietly drop out of the inventory.
+That property, not the list, is what makes this enforceable: the list documents what is known, the
+gate catches what is not.
+
+**§2's rule as v4 wrote it would break `/search` and the embed canary**, neither of which is corpus
+ingest — a design that takes down the read path. Both omitted ingest paths require `ingest.embed`
+capabilities; `validate_production.py:117` needs the constrained probe scope or a separate validation
+scope.
 
 **Requirement: separate authenticated scopes at the boundary, not one principal.**
 
