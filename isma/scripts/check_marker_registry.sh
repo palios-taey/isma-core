@@ -6,10 +6,10 @@
 # quietly shrinks. Registration is enforced here rather than remembered.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-REG="isma/scripts/ephemeral_markers.tsv"
+REG="isma/scripts/ephemeral_markers.py"
 [ -f "$REG" ] || { echo "FAIL: registry missing at $REG" >&2; exit 1; }
 
-registered=$(grep -v '^#' "$REG" | awk -F'\t' 'NF>=2 {print $2}' | sort -u)
+registered=$(python3 -c "import sys; sys.path.insert(0,'isma/scripts'); import ephemeral_markers as m; print(chr(10).join(sorted({x[1] for x in m.MARKERS})))")
 # production source only: demo/ and benchmarks/ use their own topology
 found=$(git ls-files 'isma/**/*.py' 'isma/**/*.sh' \
   | xargs grep -ohE '/__[a-z_]+__/|__[a-z_]+_fixture__' 2>/dev/null \

@@ -237,20 +237,15 @@ def main():
     # list is exactly how /__canary__/ went missing; isma/scripts/check_marker_registry.sh
     # FAILS CI when production source contains an unregistered marker literal, so a new
     # probe writer cannot silently drop out of coverage.
-    reg = Path(__file__).resolve().parent / "ephemeral_markers.tsv"
     DETECTORS = []
     try:
-        for line in reg.read_text().splitlines():
-            if line.startswith("#") or not line.strip():
-                continue
-            parts = line.split("\t")
-            if len(parts) >= 3:
-                DETECTORS.append((parts[1], parts[0], parts[2], parts[1]))  # label, prop, prefilter, exact
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import ephemeral_markers
+        DETECTORS = [(exact, prop, pre, exact) for prop, exact, pre, _w in ephemeral_markers.MARKERS]
     except Exception as e:
         check("ephemeral marker registry readable", False, f"{e}")
-        DETECTORS = []
     check("ephemeral marker registry readable", bool(DETECTORS),
-          f"{len(DETECTORS)} registered marker(s) from {reg.name}")
+          f"{len(DETECTORS)} registered marker(s) from ephemeral_markers.py")
 
     # LIVENESS BY SENTINEL, not by a generic token. A healthy source_file+Like query for
     # "*md*" proves nothing about whether "*canary*" tokenizes and matches -- same property
