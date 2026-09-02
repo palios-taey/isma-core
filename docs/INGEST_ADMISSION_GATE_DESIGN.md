@@ -74,10 +74,31 @@ silent bypass. That is a refactor across six files, not a hook. It is still enti
 is a materially larger change than this document originally assumed. Sequence it before, not after,
 any parser restoration.
 
-**Two of the six are verification fixtures that write real objects into the production class.** They
-clean up after themselves, but under a fail-closed gate they will be *refused* unless the policy
-admits them explicitly — which is correct, and is the kind of thing that turns into "the gate broke
-the tests, disable the gate" if it is discovered during rollout instead of now.
+**Two of the six are verification fixtures that write real objects into the production class**
+(`validate_production.py:165`, `verify_authority_filter.py:69`). Under a fail-closed gate they are
+*refused* unless policy admits them explicitly — and that pressure ("the gate broke the tests, disable
+the gate") is best met before anyone is under it.
+
+**The answer to that pressure is not an exemption (tutor).** A fixture that needs to write into the
+production class is asking for the wrong thing; **the fix is a test class, not a policy carve-out.**
+That removes the pressure rather than resisting it, and it is the better answer than the one this
+document originally gave.
+
+Measured while checking whether it has already cost anything — presence is a filter question, so this
+is a filter, with a positive control because the first attempt's control timed out and returned a
+clean, false empty:
+
+| filter | rows |
+|---|---|
+| `authority ~ *__authority_filter_fixture__*` | **0** |
+| `source_file ~ */__fixture__/*` | **0** |
+| positive control (known-present filter) | 1 — instrument confirmed able to see |
+
+Both writers do clean up by design: `verify_authority_filter` has a teardown asserting zero remain,
+and `validate_production:19` states writes clean up after themselves (delete at `:181`). **What this
+does not establish:** that fixtures never persist. A run that dies between write and teardown leaves
+them until something notices, and nothing currently would — which is its own argument for the test
+class.
 
 ## 3. Fail-closed contract
 
