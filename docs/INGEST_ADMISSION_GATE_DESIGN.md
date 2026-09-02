@@ -46,7 +46,7 @@ layer out. The covered effects, all verified in source:
 | remote transcript transfer | `nightly_ingest.py:238` (Mac), `:264` (Jetson) | `rsync` lands content in staging **before** anything can evaluate it |
 | parse → new durable copy | `nightly_ingest.py:211-215` → `PARSED_DIR` | no boundary at all; this is the copy #59 restores |
 | incoming move/copy | `:321`, `:335`, `:342` | moves originals and copies corpus regardless of parse outcome |
-| embedding | five real call sites, three purposes (§2a) | a raw network endpoint reachable by anything on the host |
+| embedding | known purpose-classified embedding paths (§2a; **inventory non-authoritative**) | a raw network endpoint reachable by anything on the host |
 | protected-class write | seven sites (§3) | raw `POST` reachable by anything with the endpoint |
 
 **Requirement.** Either **(a)** the admission service owns the complete source adapter and is the only
