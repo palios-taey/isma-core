@@ -191,55 +191,76 @@ def main():
 
     # ---- 10. Fixture residue left by OTHER verification runs --------------
     # Check 8 cleans up its own probe in a `finally`, which does not run if the
-    # process is SIGKILLed. verify_authority_filter.py writes fixtures too. So a
-    # killed verification run leaves real objects in the PRODUCTION class and
-    # nothing currently notices. This is that notice.
+    # process is SIGKILLed; verify_authority_filter.py and disk_headroom_canary.sh
+    # write fixtures too. A killed run therefore leaves real objects in the
+    # PRODUCTION class and nothing notices. This is that notice.
     #
-    # The control is not optional and it must be able to FAIL. A filter that
-    # returns zero because it could not run is indistinguishable from one that
-    # returned zero because nothing is there -- and the first manufactures
-    # confidence rather than withholding it. So: prove the instrument can see a
-    # known-present tile BEFORE believing any zero it reports.
-    try:
-        ctl = gql(a.weaviate, '{ Get { ISMA_Quantum(limit:1, where:{path:["scale"],'
-                              'operator:Equal,valueText:"search_512"}) { doc_hash } } }')
-        ctl_rows = len(ctl["data"]["Get"]["ISMA_Quantum"] or [])
-    except Exception as e:
-        ctl_rows = 0
-        check("residue detector can see (positive control)", False, f"control errored: {e}")
-    else:
-        check("residue detector can see (positive control)", ctl_rows >= 1,
-              f"{ctl_rows} row(s) for a known-present filter "
-              f"(0 here means the detector is BLIND, not that the store is clean)")
+    # THREE THINGS THIS CHECK GETS WRONG IF WRITTEN NAIVELY, all found in review:
+    #
+    # 1. A BOUNDED PAGE CAN PROVE PRESENCE, NEVER ABSENCE. The token prefilters
+    #    match ordinary corpus in bulk -- `source_file ~ *validate*` matches 535
+    #    objects, because `/__validate__/` and .../vllm_engine/validate.py both
+    #    reduce to the token "validate". Reading one limit:200 page and calling
+    #    zero "clean" certifies absence from 37% of the candidates. So every
+    #    prefilter is paged to its TERMINAL page before any zero is admissible.
+    #
+    # 2. THE INVENTORY OF EPHEMERAL WRITERS IS NOT SELF-EVIDENT. /__canary__/ was
+    #    missing from the first version even though the canary is a known
+    #    protected-class writer: it POSTs then deletes only on a successful POST,
+    #    so a SIGKILL in that window leaves exactly this residue.
+    #
+    # 3. A CONTROL MUST EXERCISE THE DETECTOR'S OWN QUERY SHAPE. Proving
+    #    `scale`+Equal works says nothing about `authority`/`source_file`+Like on a
+    #    tokenized property. If Like silently returned empty for one property, the
+    #    old control passed and every zero was certified false.
+    PAGE = 200
+    PAGE_CAP = 100_000
 
-    if ctl_rows >= 1:
-        # source_file and authority are tokenization=word, so Like/Equal match by
-        # TOKEN, not by string: a filter for "*/__validate__/*" also matches a real
-        # corpus tile whose path is .../vllm_engine/validate.py, because both reduce
-        # to the token "validate". The first version of this check did exactly that
-        # and reported 436 fixtures that were ordinary corpus.
-        #
-        # So the Weaviate filter is only a cheap PREFILTER. The decision is made by
-        # re-checking the exact string in Python, which is the only place an exact
-        # comparison actually happens.
-        residue = {}
-        for label, path, prefilter, exact in (
-            ("authority-filter fixture", "authority",   "*authority_filter_fixture*", "__authority_filter_fixture__"),
-            ("authority-filter source",  "source_file", "*fixture*",                  "/__fixture__/"),
-            ("validation round-trip",    "source_file", "*validate*",                 "/__validate__/"),
-        ):
-            try:
-                d = gql(a.weaviate, '{ Get { ISMA_Quantum(limit:200, where:{path:["%s"],'
-                                    'operator:Like,valueText:"%s"}) { source_file authority } } }'
-                                    % (path, prefilter))
-                rows = d["data"]["Get"]["ISMA_Quantum"] or []
-                residue[label] = sum(1 for r in rows if exact in (r.get(path) or ""))
-            except Exception as e:
-                residue[label] = f"ERROR: {e}"
+    def _page_all(prop, prefilter):
+        """Page a token prefilter to its terminal page. Bounded pages prove
+        presence; only a terminal page can support a claim of absence."""
+        rows, off = [], 0
+        while True:
+            d = gql(a.weaviate, '{ Get { ISMA_Quantum(limit:%d, offset:%d, where:{path:["%s"],'
+                                'operator:Like,valueText:"%s"}) { source_file authority } } }'
+                                % (PAGE, off, prop, prefilter))
+            page = d["data"]["Get"]["ISMA_Quantum"] or []
+            rows.extend(page)
+            if len(page) < PAGE:
+                return rows
+            off += PAGE
+            if off > PAGE_CAP:
+                raise RuntimeError(f"prefilter {prop}~{prefilter} exceeded {PAGE_CAP} rows")
+
+    DETECTORS = (
+        # label, property, token prefilter, exact substring, same-shape control token
+        ("authority-filter fixture", "authority",   "*authority_filter_fixture*", "__authority_filter_fixture__", "*a*"),
+        ("authority-filter source",  "source_file", "*fixture*",                  "/__fixture__/",                "*md*"),
+        ("validation round-trip",    "source_file", "*validate*",                 "/__validate__/",               "*md*"),
+        ("disk-canary probe",        "source_file", "*canary*",                   "/__canary__/",                 "*md*"),
+    )
+
+    residue, blind = {}, []
+    for label, prop, prefilter, exact, ctl_token in DETECTORS:
+        try:
+            # same-shape liveness: identical property AND operator as the detector
+            c = gql(a.weaviate, '{ Get { ISMA_Quantum(limit:1, where:{path:["%s"],'
+                                'operator:Like,valueText:"%s"}) { source_file } } }' % (prop, ctl_token))
+            if not (c["data"]["Get"]["ISMA_Quantum"] or []):
+                blind.append(f"{label}({prop}+Like)")
+                continue
+            rows = _page_all(prop, prefilter)
+            residue[label] = sum(1 for r in rows if exact in (r.get(prop) or ""))
+        except Exception as e:
+            residue[label] = f"ERROR: {e}"
+
+    check("residue detectors are live (same property+operator as each probe)",
+          not blind, f"blind detectors: {blind or 'none'} "
+                     f"(a blind detector cannot certify a zero)")
+    if not blind:
         clean = all(v == 0 for v in residue.values())
         check("no fixture residue in the production class", clean,
-              f"{residue} (all must be 0; counted by exact string, not by the "
-              f"token-matching Weaviate filter)")
+              f"{residue} (all must be 0; exhaustively paged, exact-string counted)")
 
     # ---- 9. Liveness of the units the path depends on --------------------
     try:
