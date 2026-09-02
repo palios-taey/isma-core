@@ -53,6 +53,7 @@ and I built §2 on it. A grep that cannot match the code's formatting reports ab
 | `hmm_store_results.py:279` | `POST /v1/objects` | enrichment writeback, creates rosetta tiles |
 | `validate_production.py:165` | `POST /v1/objects` | verification fixtures — real objects in the production class |
 | `verify_authority_filter.py:69` | `POST /v1/objects` | verification fixtures, ditto |
+| `disk_headroom_canary.sh:151` | `curl -X POST /v1/objects` | **shell**, live timer, writes+deletes a probe object every 15 min |
 
 Excluded after checking the verb rather than the URL shape: `isma_core.py:798` is a PATCH loop
 (supersession), and the `/v1/objects/ISMA_Quantum/{id}` forms are GET/DELETE. Non-production:
@@ -62,17 +63,44 @@ Excluded after checking the verb rather than the URL shape: `isma_core.py:798` i
 `insert_objects` — treasurer corrected their own first pass on this), and `nightly_ingest.py` genuinely
 has zero Weaviate writes. Both of those original claims hold.
 
-### What this changes
+> **SECOND CORRECTION TO THIS SECTION, and it was my own correction that introduced it.** The
+> table above originally read six. treasurer-codex found a **seventh**: `disk_headroom_canary.sh`.
+> It had been listed in the *first* version of this section and **I deleted it while correcting the
+> undercount** — the corrected text mentions it zero times, the original mentioned it once. Recorded
+> because it is this document's own thesis turned on itself: a correction is written with more
+> confidence and read with less care than the claim it replaces, and that is where the next error
+> lands. Two independent reviewers have now had to fix §2. Treat my counts here as reviewed, never
+> as verified by me.
 
-**A gate installed at `insert_objects` would have shipped with at least five bypasses**, one of them
-an HTTP endpoint reachable by any caller holding the API key. That is not a gate.
+### What this changes — the helper refactor is NOT the answer
 
-So enforcement cannot be a check added to one function. It requires **a single mandatory write helper
-that every path routes through, with the raw `requests.post` / `urllib` calls removed** — the gate
-lives there and nowhere else, and a direct-POST call site becomes a reviewable defect rather than a
-silent bypass. That is a refactor across six files, not a hook. It is still entirely feasible, and it
-is a materially larger change than this document originally assumed. Sequence it before, not after,
-any parser restoration.
+**A gate installed at `insert_objects` would have shipped with at least six bypasses**, one an HTTP
+endpoint reachable by any caller holding the API key, and one a **shell script on a live 15-minute
+timer**. That is not a gate.
+
+My previous conclusion — one mandatory Python write helper, raw posts removed, six-file refactor —
+is **insufficient, and treasurer-codex is right about why**: a Python helper cannot mechanically
+govern a `curl` in a shell script, and nothing stops the next writer, in any language, from calling
+the raw endpoint. **A language-level helper is consolidation, not a boundary.**
+
+The root shape needs all three:
+
+1. **Move non-corpus writers out of the protected class.** The canary probe and both verification
+   fixtures have no business in `ISMA_Quantum` — they need a dedicated probe/test class. This alone
+   removes three of the seven, and it is the same reasoning as the fixtures/test-class point below:
+   the fix is to stop asking, not to grant an exemption.
+2. **Enforce at a network/credential boundary**, so only the admission service holds credentials that
+   can write the protected class. That is what makes the guarantee independent of language, of future
+   code, and of external clients.
+3. **A mechanical repository gate** banning direct protected-class writes, so a new raw POST fails CI
+   rather than being caught by review.
+
+Consolidating the Python call sites remains worth doing as step 0, but it must not be mistaken for
+the boundary. Sequence all of this before, not after, any parser restoration.
+
+**A deployment note that matters here:** the canary is one of the two *release-pinned* units, so a
+repo change to it does not run until the pin is moved (see `deploy/pin_release.sh`). Any plan that
+assumes editing the script deploys the change is wrong for exactly this file.
 
 **Two of the six are verification fixtures that write real objects into the production class**
 (`validate_production.py:165`, `verify_authority_filter.py:69`). Under a fail-closed gate they are
