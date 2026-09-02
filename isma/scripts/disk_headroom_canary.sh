@@ -172,8 +172,7 @@ if command -v curl >/dev/null 2>&1; then
 
   case "$code" in
     200|201)
-      WRITE_OK=0; PROBE_CAUSE="ok"
-      curl -s -m15 -o /dev/null -X DELETE "$WEAVIATE_URL/v1/objects/ISMA_Quantum/$PROBE_ID" 2>/dev/null ;;
+      WRITE_OK=0; PROBE_CAUSE="ok" ;;
     000)
       # No HTTP response. The store may be perfectly healthy and simply unreachable —
       # this says NOTHING about disk and must never be reported as a disk condition.
@@ -194,6 +193,24 @@ if command -v curl >/dev/null 2>&1; then
         *)
           PROBE_CAUSE="write refused (http=$code) — $body" ;;
       esac ;;
+  esac
+
+  # CLEANUP RUNS ON 200|201 *AND* ON 000, and the 000 case is the one that matters.
+  #
+  # http=000 means curl got no answer within 15s. It does NOT mean the write failed:
+  # the server may have created the object and only the RESPONSE was lost. That is not
+  # hypothetical — on 2026-09-02 a residue sweep found 7 probe objects under
+  # /__canary__/ whose creation timestamps pair one-to-one with the 7 http=000 alerts,
+  # each object written 25-240s BEFORE the alert claiming the store would not accept
+  # writes. The writes had all succeeded. Deleting only on 200|201 leaked one synthetic
+  # tile into the production corpus per false alarm.
+  #
+  # DELETE is idempotent — a 404 for an object that was never created costs one request —
+  # so attempting it whenever the object MIGHT exist is strictly safer than reasoning
+  # about whether it does. An asymmetric cleanup path is a leak by construction.
+  case "$code" in
+    200|201|000)
+      curl -s -m15 -o /dev/null -X DELETE "$WEAVIATE_URL/v1/objects/ISMA_Quantum/$PROBE_ID" 2>/dev/null || true ;;
   esac
 fi
 
