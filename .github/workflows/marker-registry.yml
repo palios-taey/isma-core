@@ -1,0 +1,58 @@
+name: marker-registry
+
+# Enforces isma/scripts/check_marker_registry.sh: every ephemeral probe/fixture
+# marker literal in production source must be registered in ephemeral_markers.py.
+#
+# This workflow exists because the claim came before the enforcement. The registry
+# docstring asserted the script "FAILS CI" while nothing under .github invoked it --
+# a label promising a guarantee no mechanism provided, which is the same defect class
+# the registry was written to prevent. Found in review, not by its author.
+
+'on':
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  marker-registry:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Registry schema and writer-boundary validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 isma/scripts/validate_marker_registry.py
+
+      - name: Every production marker literal is registered
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./isma/scripts/check_marker_registry.sh
+
+      - name: NEGATIVE CONTROL — the gate must be able to fail
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A gate never shown to fire is inadmissible. Drop a registered marker and
+          # require a non-zero exit naming it; restore afterwards. Receipts for this
+          # step are the proof that the green above means something.
+          cp isma/scripts/ephemeral_markers.py /tmp/reg.bak
+          grep -v '"/__canary__/"' /tmp/reg.bak > isma/scripts/ephemeral_markers.py
+          if ./isma/scripts/check_marker_registry.sh 2>/tmp/neg.err; then
+            echo "NEGATIVE CONTROL FAILED: gate passed with /__canary__/ unregistered" >&2
+            cp /tmp/reg.bak isma/scripts/ephemeral_markers.py
+            exit 1
+          fi
+          grep -q '/__canary__/' /tmp/neg.err || {
+            echo "NEGATIVE CONTROL FAILED: gate failed but did not name the marker" >&2
+            cp /tmp/reg.bak isma/scripts/ephemeral_markers.py; exit 1; }
+          cat /tmp/neg.err
+          cp /tmp/reg.bak isma/scripts/ephemeral_markers.py
+          echo "OK: gate fails and names the missing marker"

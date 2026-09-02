@@ -27,6 +27,7 @@ Usage:
 Exit 0 only if every check passes. Intended to be re-run independently by a
 reviewer; it takes no arguments that change what it asserts.
 """
+from pathlib import Path
 import argparse
 import json
 import subprocess
@@ -188,6 +189,128 @@ def main():
         except Exception:
             left = -1
         check("validation left no residue", left == 0, f"{left} probe tiles remain (must be 0)")
+
+    # ---- 10. Fixture residue left by OTHER verification runs --------------
+    # Check 8 cleans up its own probe in a `finally`, which does not run if the
+    # process is SIGKILLed; verify_authority_filter.py and disk_headroom_canary.sh
+    # write fixtures too. A killed run therefore leaves real objects in the
+    # PRODUCTION class and nothing notices. This is that notice.
+    #
+    # THREE THINGS THIS CHECK GETS WRONG IF WRITTEN NAIVELY, all found in review:
+    #
+    # 1. A BOUNDED PAGE CAN PROVE PRESENCE, NEVER ABSENCE. The token prefilters
+    #    match ordinary corpus in bulk -- `source_file ~ *validate*` matches 535
+    #    objects, because `/__validate__/` and .../vllm_engine/validate.py both
+    #    reduce to the token "validate". Reading one limit:200 page and calling
+    #    zero "clean" certifies absence from 37% of the candidates. So every
+    #    prefilter is paged to its TERMINAL page before any zero is admissible.
+    #
+    # 2. THE INVENTORY OF EPHEMERAL WRITERS IS NOT SELF-EVIDENT. /__canary__/ was
+    #    missing from the first version even though the canary is a known
+    #    protected-class writer: it POSTs then deletes only on a successful POST,
+    #    so a SIGKILL in that window leaves exactly this residue.
+    #
+    # 3. A CONTROL MUST EXERCISE THE DETECTOR'S OWN QUERY SHAPE. Proving
+    #    `scale`+Equal works says nothing about `authority`/`source_file`+Like on a
+    #    tokenized property. If Like silently returned empty for one property, the
+    #    old control passed and every zero was certified false.
+    PAGE = 200
+    PAGE_CAP = 100_000
+
+    def _page_all(prop, prefilter):
+        """Page a token prefilter to its terminal page. Bounded pages prove
+        presence; only a terminal page can support a claim of absence."""
+        rows, off = [], 0
+        while True:
+            d = gql(a.weaviate, '{ Get { ISMA_Quantum(limit:%d, offset:%d, where:{path:["%s"],'
+                                'operator:Like,valueText:"%s"}) { source_file authority _additional { id } } } }'
+                                % (PAGE, off, prop, prefilter))
+            page = d["data"]["Get"]["ISMA_Quantum"] or []
+            rows.extend(page)
+            if len(page) < PAGE:
+                return rows
+            off += PAGE
+            if off > PAGE_CAP:
+                raise RuntimeError(f"prefilter {prop}~{prefilter} exceeded {PAGE_CAP} rows")
+
+    # DETECTORS come from the committed registry, not a local tuple. A hand-kept
+    # list is exactly how /__canary__/ went missing; isma/scripts/check_marker_registry.sh
+    # FAILS CI when production source contains an unregistered marker literal, so a new
+    # probe writer cannot silently drop out of coverage.
+    DETECTORS = []
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import ephemeral_markers
+        DETECTORS = [(exact, prop, pre, exact) for prop, exact, pre, _w in ephemeral_markers.MARKERS]
+    except Exception as e:
+        check("ephemeral marker registry readable", False, f"{e}")
+    check("ephemeral marker registry readable", bool(DETECTORS),
+          f"{len(DETECTORS)} registered marker(s) from ephemeral_markers.py")
+
+    # LIVENESS BY SENTINEL, not by a generic token. A healthy source_file+Like query for
+    # "*md*" proves nothing about whether "*canary*" tokenizes and matches -- same property
+    # and operator with a DIFFERENT token is not a positive control for the admitted zero.
+    # So each detector is proven against an object carrying its OWN exact marker, and only
+    # THIS run's sentinel id is excluded from the residue count: a sentinel left behind by a
+    # killed earlier run is residue, and must be reported as such.
+    residue, blind, cleanup_failed = {}, [], []
+    for label, prop, prefilter, exact in DETECTORS:
+        sid = str(uuid.uuid4())
+        # The sentinel must carry the REAL marker so the actual predicate is exercised,
+        # and it is identified by its OBJECT ID -- not by an 8-char fragment embedded in
+        # a property. A substring is not an identity: it cannot distinguish this run's
+        # sentinel from anything else that happens to contain those characters.
+        sv = f"{exact}sentinel_{sid[:8]}.md" if prop == "source_file" else f"{exact}__sentinel_{sid[:8]}"
+        try:
+            body = {"class": "ISMA_Quantum", "id": sid, "properties": {
+                "content": f"ephemeral residue-detector sentinel {sid}",
+                "source_file": sv if prop == "source_file" else f"/__sentinel__/{sid}.md",
+                "authority": sv if prop == "authority" else "advisory",
+                "scale": "search_512", "is_superseded": False}}
+            urllib.request.urlopen(urllib.request.Request(
+                f"{a.weaviate}/v1/objects", data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"}), timeout=30)
+
+            rows = _page_all(prop, prefilter)
+            rid = lambda r: ((r.get("_additional") or {}).get("id") or "")
+            if not any(rid(r) == sid for r in rows):
+                blind.append(f"{label}({prop}+Like {prefilter})")
+                continue
+            residue[label] = sum(1 for r in rows
+                                 if exact in (r.get(prop) or "") and rid(r) != sid)
+        except Exception as e:
+            residue[label] = f"ERROR: {e}"
+        finally:
+            # CLEANUP IS A VALIDATION RESULT, NOT A BEST EFFORT. The sentinel was excluded
+            # from the residue count above; if its DELETE silently failed, this run would
+            # report zero while having just created a new production object. So the delete
+            # is verified by exact-ID absence and any unresolved status turns the run red.
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{a.weaviate}/v1/objects/ISMA_Quantum/{sid}", method="DELETE"), timeout=30)
+            except Exception:
+                pass
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{a.weaviate}/v1/objects/ISMA_Quantum/{sid}"), timeout=30)
+                cleanup_failed.append(f"{label}:{sid} still present after DELETE")
+            except urllib.error.HTTPError as he:
+                if he.code != 404:
+                    cleanup_failed.append(f"{label}:{sid} unresolved status {he.code}")
+            except Exception as e:
+                cleanup_failed.append(f"{label}:{sid} cleanup unverifiable: {e}")
+
+    check("sentinel cleanup verified by object id", not cleanup_failed,
+          f"{cleanup_failed or 'all sentinels confirmed absent (404) after DELETE'}")
+
+    check("residue detectors proven live against their own markers",
+          not blind, f"blind: {blind or 'none'} "
+                     f"(a detector that cannot see its own sentinel cannot certify a zero)")
+    if not blind and DETECTORS:
+        clean = all(v == 0 for v in residue.values())
+        check("no residue for KNOWN REGISTERED markers", clean,
+              f"{residue} (all must be 0; exhaustively paged, exact-string counted, "
+              f"scope = registered markers only)")
 
     # ---- 9. Liveness of the units the path depends on --------------------
     try:
