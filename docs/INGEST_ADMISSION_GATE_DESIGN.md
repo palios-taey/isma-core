@@ -24,30 +24,60 @@ is a useful counterexample — see §4.
 
 ---
 
-## 2. The choke point — verified, not assumed
+## 2. The write surface — corrected
 
-ISMA has effectively **one** corpus write path:
+> **This section previously claimed ISMA had ONE corpus write choke point and labelled that claim
+> "verified, not assumed." It was wrong, and it was the load-bearing feasibility argument of this
+> document.** treasurer caught it by checking the premise against source. Recorded in full because a
+> design whose central premise was wrong once should carry the correction where reviewers read it,
+> not in a thread.
 
-| surface | verdict |
-|---|---|
-| `isma/scripts/ingest_md_file.py:172` `insert_objects()` → `POST /v1/batch/objects` | **the choke point** |
-| `isma/scripts/backfill_md_corpus.py` | imports `ingest_md_file as ing` — reuses the same writer |
-| `isma/scripts/nightly_ingest.py` | **0** Weaviate references; writes nothing to the store |
-| `benchmarks/beir_eval.py`, `demo/setup_demo.py` | `POST /v1/schema` only — benchmark/demo, not corpus |
-| `disk_headroom_canary.sh` | writes and immediately deletes one probe object |
-| everything else matching `.post(...WEAVIATE_URL...)` | `POST /v1/graphql` — that is how Weaviate **reads** |
+**How the error was produced.** My enumeration used a regex requiring `.post(` and the URL on the
+*same line*:
 
-`insert_objects` is defined and called in exactly one file. **One function is the whole enforcement
-surface**, which is what makes this gate feasible rather than aspirational.
+```
+\.(post|put|patch|delete)\(.*(WEAVIATE_URL|v1/(batch|objects))
+```
 
-> **A refinement to #59 that belongs here.** Because `nightly_ingest.py` writes nothing to Weaviate,
-> restoring `parse_raw_exports.py` alone would produce parsed `.json` on disk under `PARSED_DIR` —
-> *not* tiles in the graph. A second, currently-absent link would have to exist. That makes the
-> exposure two steps away rather than one. It does **not** soften the ordering constraint: parsed
-> transcript content on disk in a new location is still a copy, `PARSED_DIR` sits next to watched
-> roots, and "no consumer in isma-core" is not "no consumer anywhere" (§7).
+Most of these calls are multi-line — `requests.post(` on one line, `f"{WEAVIATE_URL}/v1/objects",`
+on the next — so the pattern could not see them. It returned a clean, plausible, **false** negative,
+and I built §2 on it. A grep that cannot match the code's formatting reports absence, not absence.
 
----
+**The actual production writers of `ISMA_Quantum`, read directly rather than detected:**
+
+| site | endpoint | what it is |
+|---|---|---|
+| `ingest_md_file.py:172` | `POST /v1/batch/objects` | markdown corpus ingest — what I mistook for *the* choke point |
+| `query_api.py:1031` | `POST /v1/objects` | **network-exposed** — `@app.post("/ingest/session")`, API-key gated |
+| `isma_core.py:1195` | `POST /v1/objects` | multi-scale tiling write (512/2048/4096) |
+| `hmm_store_results.py:279` | `POST /v1/objects` | enrichment writeback, creates rosetta tiles |
+| `validate_production.py:165` | `POST /v1/objects` | verification fixtures — real objects in the production class |
+| `verify_authority_filter.py:69` | `POST /v1/objects` | verification fixtures, ditto |
+
+Excluded after checking the verb rather than the URL shape: `isma_core.py:798` is a PATCH loop
+(supersession), and the `/v1/objects/ISMA_Quantum/{id}` forms are GET/DELETE. Non-production:
+`beir_eval.py`, `setup_demo.py`.
+
+`backfill_md_corpus.py` genuinely does reuse `ingest_md_file` (by `ing.ingest_file()`, one level above
+`insert_objects` — treasurer corrected their own first pass on this), and `nightly_ingest.py` genuinely
+has zero Weaviate writes. Both of those original claims hold.
+
+### What this changes
+
+**A gate installed at `insert_objects` would have shipped with at least five bypasses**, one of them
+an HTTP endpoint reachable by any caller holding the API key. That is not a gate.
+
+So enforcement cannot be a check added to one function. It requires **a single mandatory write helper
+that every path routes through, with the raw `requests.post` / `urllib` calls removed** — the gate
+lives there and nowhere else, and a direct-POST call site becomes a reviewable defect rather than a
+silent bypass. That is a refactor across six files, not a hook. It is still entirely feasible, and it
+is a materially larger change than this document originally assumed. Sequence it before, not after,
+any parser restoration.
+
+**Two of the six are verification fixtures that write real objects into the production class.** They
+clean up after themselves, but under a fail-closed gate they will be *refused* unless the policy
+admits them explicitly — which is correct, and is the kind of thing that turns into "the gate broke
+the tests, disable the gate" if it is discovered during rollout instead of now.
 
 ## 3. Fail-closed contract
 
@@ -72,6 +102,11 @@ markdown prose ingest refuse everything until a policy exists that explicitly ad
 roots. That is intended. It converts the three accidental containments in #59 into three declared
 decisions. Whoever lands this must land an initial policy in the same change, or ISMA prose ingest
 stops — and that should be a visible, loud stop, not a silent one.
+
+**And the stop must be distinguishable from the ingest simply being broken** (tutor). This fleet has
+just spent a week on signals that were ambiguous in exactly this way — a unit exiting `0` over a leg
+that had ingested nothing for 52 days. *"Refusing because no policy admits these roots"* and
+*"silently ingesting nothing"* must not look alike to whoever glances at it next.
 
 ---
 
@@ -110,6 +145,24 @@ Admission is only auditable if refusals and admits are both recorded. Each decis
 policy source identifier and version, the rule that matched, the source identity evaluated, the
 lineage chain walked, timestamp, and outcome. Refusals are logged at least as loudly as admits — a
 silently-refused ingest is the same failure shape as a silently-admitted one.
+
+**`HELD` means refuse-AND-ALERT, not refuse (tutor, answering Q3 directly).** The reasoning is the
+strongest argument in this document and it is not about operator convenience:
+
+> A silent refusal is indistinguishable from a gate that never fired. If `HELD` refuses silently,
+> then *"the gate is working and correctly refusing nothing"* and *"the gate is broken and refusing
+> nothing"* produce identical observations, forever.
+
+The alert is the only evidence the mechanism is alive.
+
+**Which forces a second requirement most gate designs omit: how would anyone notice the gate had
+stopped firing at all?** Refusals are rare by design, so their absence is the expected steady state
+and cannot itself be a liveness signal. This repo has already solved this exact shape once — the disk
+canary writes a heartbeat on *every completed observation*, including the healthy path, precisely
+because its alert state file is deleted on recovery and silence becomes ambiguous. A watchdog then
+escalates on a stale heartbeat. **The admission gate needs the same: a positive liveness signal
+emitted on every decision, admit or refuse, and something that notices when it stops.** Reuse
+`isma-canary-watchdog`'s pattern rather than reinventing it.
 
 ---
 
