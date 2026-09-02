@@ -1,0 +1,20 @@
+# Registry of EPHEMERAL PROBE/FIXTURE MARKERS written into the production class.
+#
+# Anything that writes a short-lived object into ISMA_Quantum MUST register its
+# marker here. This file is not documentation: validate_production.py builds its
+# residue detectors from it, and check_marker_registry.sh FAILS CI when a
+# production source file contains a marker literal that is not listed.
+#
+# That gate is the point. /__canary__/ was missing from a hand-maintained detector
+# list for as long as the list existed, and was only found in review. A registry
+# nobody is forced to update is the same hand-maintained list with extra steps.
+#
+# The real fix is that these writers should not use the production class at all --
+# a probe/test class removes the reason this file exists. Until that lands, this
+# keeps the inventory mechanically honest rather than merely current.
+#
+# property<TAB>exact marker<TAB>token prefilter<TAB>writer
+source_file	/__canary__/	*canary*	isma/scripts/disk_headroom_canary.sh
+source_file	/__validate__/	*validate*	isma/scripts/validate_production.py
+source_file	/__fixture__/	*fixture*	isma/scripts/verify_authority_filter.py
+authority	__authority_filter_fixture__	*authority_filter_fixture*	isma/scripts/verify_authority_filter.py

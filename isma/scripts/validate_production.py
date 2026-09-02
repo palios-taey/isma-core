@@ -27,6 +27,7 @@ Usage:
 Exit 0 only if every check passes. Intended to be re-run independently by a
 reviewer; it takes no arguments that change what it asserts.
 """
+from pathlib import Path
 import argparse
 import json
 import subprocess
@@ -232,35 +233,70 @@ def main():
             if off > PAGE_CAP:
                 raise RuntimeError(f"prefilter {prop}~{prefilter} exceeded {PAGE_CAP} rows")
 
-    DETECTORS = (
-        # label, property, token prefilter, exact substring, same-shape control token
-        ("authority-filter fixture", "authority",   "*authority_filter_fixture*", "__authority_filter_fixture__", "*a*"),
-        ("authority-filter source",  "source_file", "*fixture*",                  "/__fixture__/",                "*md*"),
-        ("validation round-trip",    "source_file", "*validate*",                 "/__validate__/",               "*md*"),
-        ("disk-canary probe",        "source_file", "*canary*",                   "/__canary__/",                 "*md*"),
-    )
-
-    residue, blind = {}, []
-    for label, prop, prefilter, exact, ctl_token in DETECTORS:
-        try:
-            # same-shape liveness: identical property AND operator as the detector
-            c = gql(a.weaviate, '{ Get { ISMA_Quantum(limit:1, where:{path:["%s"],'
-                                'operator:Like,valueText:"%s"}) { source_file } } }' % (prop, ctl_token))
-            if not (c["data"]["Get"]["ISMA_Quantum"] or []):
-                blind.append(f"{label}({prop}+Like)")
+    # DETECTORS come from the committed registry, not a local tuple. A hand-kept
+    # list is exactly how /__canary__/ went missing; isma/scripts/check_marker_registry.sh
+    # FAILS CI when production source contains an unregistered marker literal, so a new
+    # probe writer cannot silently drop out of coverage.
+    reg = Path(__file__).resolve().parent / "ephemeral_markers.tsv"
+    DETECTORS = []
+    try:
+        for line in reg.read_text().splitlines():
+            if line.startswith("#") or not line.strip():
                 continue
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                DETECTORS.append((parts[1], parts[0], parts[2], parts[1]))  # label, prop, prefilter, exact
+    except Exception as e:
+        check("ephemeral marker registry readable", False, f"{e}")
+        DETECTORS = []
+    check("ephemeral marker registry readable", bool(DETECTORS),
+          f"{len(DETECTORS)} registered marker(s) from {reg.name}")
+
+    # LIVENESS BY SENTINEL, not by a generic token. A healthy source_file+Like query for
+    # "*md*" proves nothing about whether "*canary*" tokenizes and matches -- same property
+    # and operator with a DIFFERENT token is not a positive control for the admitted zero.
+    # So each detector is proven against an object carrying its OWN exact marker, and only
+    # THIS run's sentinel id is excluded from the residue count: a sentinel left behind by a
+    # killed earlier run is residue, and must be reported as such.
+    residue, blind = {}, []
+    for label, prop, prefilter, exact in DETECTORS:
+        sid = str(uuid.uuid4())
+        sentinel_val = f"{exact}__sentinel_{sid[:8]}" if prop == "authority" else f"{exact}sentinel_{sid[:8]}.md"
+        try:
+            body = {"class": "ISMA_Quantum", "id": sid, "properties": {
+                "content": f"ephemeral residue-detector sentinel {sid}",
+                "source_file": sentinel_val if prop == "source_file" else f"/__sentinel__/{sid}.md",
+                "authority": sentinel_val if prop == "authority" else "advisory",
+                "scale": "search_512", "is_superseded": False}}
+            urllib.request.urlopen(urllib.request.Request(
+                f"{a.weaviate}/v1/objects", data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"}), timeout=30)
+
             rows = _page_all(prop, prefilter)
-            residue[label] = sum(1 for r in rows if exact in (r.get(prop) or ""))
+            seen_sentinel = any(sid[:8] in (r.get(prop) or "") for r in rows)
+            if not seen_sentinel:
+                blind.append(f"{label}({prop}+Like {prefilter})")
+                continue
+            # residue = exact-marker rows that are NOT this run's sentinel
+            residue[label] = sum(1 for r in rows
+                                 if exact in (r.get(prop) or "") and sid[:8] not in (r.get(prop) or ""))
         except Exception as e:
             residue[label] = f"ERROR: {e}"
+        finally:
+            try:
+                urllib.request.urlopen(urllib.request.Request(
+                    f"{a.weaviate}/v1/objects/ISMA_Quantum/{sid}", method="DELETE"), timeout=30)
+            except Exception:
+                pass
 
-    check("residue detectors are live (same property+operator as each probe)",
-          not blind, f"blind detectors: {blind or 'none'} "
-                     f"(a blind detector cannot certify a zero)")
-    if not blind:
+    check("residue detectors proven live against their own markers",
+          not blind, f"blind: {blind or 'none'} "
+                     f"(a detector that cannot see its own sentinel cannot certify a zero)")
+    if not blind and DETECTORS:
         clean = all(v == 0 for v in residue.values())
-        check("no fixture residue in the production class", clean,
-              f"{residue} (all must be 0; exhaustively paged, exact-string counted)")
+        check("no residue for KNOWN REGISTERED markers", clean,
+              f"{residue} (all must be 0; exhaustively paged, exact-string counted, "
+              f"scope = registered markers only)")
 
     # ---- 9. Liveness of the units the path depends on --------------------
     try:
