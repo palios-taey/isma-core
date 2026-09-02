@@ -12,6 +12,16 @@ Usage:
     python3 nightly_ingest.py                # Full nightly run
     python3 nightly_ingest.py --check        # Preview what would run
     python3 nightly_ingest.py --skip-rsync   # Skip remote rsync sources
+
+STATUS 2026-08-30 -- sources 1-3 (transcript parsing) are BROKEN and are to stay broken
+until a fail-closed admission gate exists. They shell out to parse_raw_exports.py, which
+is not in this repo and never has been; every parse has failed since 2026-07-10 and the
+unit still exits 0. Do not "repair" that shell-out without reading the block comment at
+its call site in ingest_transcript_source() first -- restoring it re-arms every eligible
+operator session transcript through a path with no PII/redaction/admission gate. Issue #59.
+
+Source 4 (incoming/) is NOT broken for corpus drops: process_incoming copies those
+straight through with no type or content filter. Treat incoming/corpus as live.
 """
 
 import argparse
@@ -208,6 +218,35 @@ def ingest_transcript_source(state, source_name, source_dir, label, check_only=F
 
     processed = 0
     for file_path in sorted(new_files):
+        # ---------------------------------------------------------------------------
+        # STOP. This shell-out fails on every file and has since 2026-07-10. If you are
+        # here to fix that, read this first: the fix is ordered, and the obvious order
+        # is the harmful one. See issue #59.
+        #
+        # OBSERVED, not inferred:
+        #   parse_raw_exports.py does not exist in this repo -- 0 hits across full git
+        #   history, 0 in HEAD. Commit 2dac2f1 (2026-07-09) ported this file in without
+        #   its siblings. SCRIPTS_DIR is __file__.parent, so the path resolves here and
+        #   python3 exits 2. 4,695 such failures logged to date (also 52 for a second
+        #   missing script, build_dedup_manifest.py).
+        #   run_cmd -> False means mark_file_ingested below is never reached, so nothing
+        #   is checkpointed and the same files are rediscovered as "new" every night.
+        #   The unit still exits 0, so systemd has reported success over a leg that has
+        #   ingested nothing for 52 days.
+        #
+        # WHY IT IS STILL BROKEN ON PURPOSE:
+        #   This leg has no PII, redaction, or admission gate. is_main_session filters
+        #   session TYPE only (/subagents/, agent-*), and file_is_new compares size and
+        #   mtime_ns -- so a growing transcript re-qualifies every night. Restoring the
+        #   parser re-arms every eligible operator session transcript at once through an
+        #   ungated path. The repair and the exposure are the same action.
+        #
+        # DO NOT restore parse_raw_exports.py, and do not add data/corpus to the md
+        # watcher roots, until a fail-closed admission gate is committed AND observed in
+        # production. Reconnecting this without the gate is not a careless act -- it is
+        # the obviously correct fix for the visible symptom, which is exactly why the
+        # warning is here at the call site instead of only in the tracker.
+        # ---------------------------------------------------------------------------
         success = run_cmd(
             f"cd {SCRIPTS_DIR} && python3 parse_raw_exports.py "
             f"--input '{file_path}' --output '{PARSED_DIR}'",
@@ -316,10 +355,25 @@ def process_incoming(state, check_only=False):
         else:
             log.info("Skipping unsupported incoming transcript file: %s", file_path.name)
 
+        # NOTE: this move is NOT gated on parse success -- it is a sibling of the
+        # `if success:` block above, not inside it. So a file dropped in
+        # incoming/transcripts is RELOCATED to incoming/processed/YYYYMMDD even when
+        # its parse failed and nothing was ingested. That makes this directory unsafe
+        # for anything under a preservation or custody hold: staging evidence here to
+        # "keep it safe" scatters it out of its recorded location while ingesting
+        # nothing. Raised by treasurer-codex. See issue #59.
         if not check_only:
             archive.mkdir(parents=True, exist_ok=True)
             shutil.move(str(file_path), archive / file_path.name)
 
+    # This leg is LIVE -- unlike the transcript legs above, it does not shell out to the
+    # missing parser. It is a straight copy2 into the corpus tree with no type filter and
+    # no content gate (corpus_files is rglob("*") + is_file(), broader than the .jsonl
+    # main-session filter used for transcripts). Anything dropped in incoming/corpus lands.
+    # It is currently held back from Weaviate only by data/corpus being absent from the md
+    # watcher roots file -- one config line, not a gate. Do not stage quarantined or
+    # unreviewed material here on the assumption that nightly ingest is broken; the broken
+    # part is the other leg. See issue #59.
     for file_path in sorted(corpus_files):
         is_new, key, stat = file_is_new(state, "incoming_corpus", corpus_drop_dir, file_path)
         dest = CORPUS_DIR / "mira_loose" / file_path.name
