@@ -37,13 +37,23 @@ set -euo pipefail
 
 REF="origin/main"
 CHECK=0
-for arg in "$@"; do
-  case "$arg" in
+die()  { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+# NOTE: this was a `for arg in "$@"` loop with a `shift` inside it, which does not
+# work -- the loop iterates over a snapshot of the arguments, so shifting does not
+# advance it. `--check --ref origin/main` parsed REF as the literal "--ref". Worse,
+# the resolve step below used `git rev-parse "$REF^{commit}"` WITHOUT --verify, and
+# rev-parse echoes an unresolvable ref back and exits 0 -- so a step written to fail
+# loud passed garbage through, and the run only died later at the target check.
+# Found by conductor during the 09731a71 activation. Consume-and-shift is the fix.
+while [ $# -gt 0 ]; do
+  case "$1" in
     --check)   CHECK=1 ;;
-    --ref)     shift; REF="${1:-}" ;;
-    --ref=*)   REF="${arg#*=}" ;;
+    --ref)     shift; [ $# -gt 0 ] || die "--ref requires a value"; REF="$1" ;;
+    --ref=*)   REF="${1#*=}" ;;
     -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
+    *)         printf 'unknown argument: %s\n' "$1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 RELEASES_ROOT="${ISMA_RELEASES_ROOT:-$HOME/releases/isma-core}"
@@ -53,13 +63,19 @@ UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 say()  { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
-die()  { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
 [ -n "$REF" ] || die "--ref given with no value"
 
 step "1. resolve the ref"
 git -C "$REPO_ROOT" fetch --quiet origin 2>/dev/null || say "   (fetch skipped/failed; using local refs)"
-SHA="$(git -C "$REPO_ROOT" rev-parse "$REF^{commit}")" || die "cannot resolve ref '$REF'"
+# --verify is load-bearing: without it rev-parse echoes an unresolvable ref back
+# and exits 0, which is a fail-OPEN in the one step that must fail closed.
+SHA="$(git -C "$REPO_ROOT" rev-parse --verify "$REF^{commit}" 2>/dev/null)" \
+  || die "cannot resolve ref '$REF' to a commit"
+case "$SHA" in
+  [0-9a-f]*) [ ${#SHA} -eq 40 ] || die "resolved ref is not a full SHA: $SHA" ;;
+  *) die "resolved ref is not a SHA: $SHA" ;;
+esac
 SHORT="${SHA:0:8}"
 say "   $REF -> $SHA"
 
