@@ -140,7 +140,7 @@ behaviour, *not* confirmed in code. To close it, read `retrieval.py`'s hmm path;
 it to `[Observed]` without the code.**
 
 **5.2 — `backup_isma_store.sh:32` silent default (real, unfixed).**
-a hardcoded operator-specific backup default in `backup_isma_store.sh` (removed in `8e0227b`), with `deploy/systemd/isma-backup.service:8`
+a hardcoded operator-specific backup default in `isma/scripts/backup_isma_store.sh` (removed in `8e0227b`), with `deploy/systemd/isma-backup.service:8`
 matching. A downloaded install backs ISMA up to a directory that is not theirs **and never says
 so** — the fail-loud violation this repo's own doc names. Two further occurrences are comments
 only (`ingest_md_file.py:259`, `backup_isma_store.sh:23`). Flagged, deliberately kept out of #49.

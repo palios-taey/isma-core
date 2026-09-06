@@ -178,7 +178,7 @@ stale copies become permanent.
 | lever | measurement | risk |
 |---|---|---|
 | **Private watch root** the operator-private ISMA tree | 141 files walked; 87 bodies unique to it; **87/87 already in the corpus** | Removal loses only *future updates* to stale-tree docs. Content is not lost — the watcher is additive and never deletes. |
-| **2 stale-pointer docs** | `ISMA_MODEL_SURFACE_RETRIEVAL_SPEC_v1.md`, `ISMA_PROCEDURE_embedding_server.md` — retrievable, but indexed under `the operator-private ISMA tree/reports/` | Content reachable; the **pointer** in the metadata resolves into a private tree. Re-homing needs delete-then-ingest (destructive) precisely because of §3. |
+| **2 stale-pointer docs** | `docs/taey/ISMA_MODEL_SURFACE_RETRIEVAL_SPEC_v1.md`, `docs/taey/ISMA_PROCEDURE_embedding_server.md` — retrievable, but indexed under `the operator-private ISMA tree/reports/` | Content reachable; the **pointer** in the metadata resolves into a private tree. Re-homing needs delete-then-ingest (destructive) precisely because of §3. |
 | **`--purge-on-change`** | not passed; predicates never adversarially tested | **Deletes tiles.** Wants its own scrutiny, not a rider on another change. |
 
 ---
