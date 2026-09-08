@@ -239,9 +239,9 @@ echo "$(date +%s) ${USED} write_ok=${WRITE_OK}" > "$HEARTBEAT" 2>/dev/null || tr
 # reading. Because STALE_SECS (1h) < REMIND_SECS (24h), the reminder branch below
 # was also UNREACHABLE — the guard blanked LAST_SEEN before it could ever be
 # tested. Observed in production: 116 warnings, 46 alerts sent, 0 REMINDER.
-LAST_SEEN=""; OBS_TS=0; ALERT_TS=0; LAST_ALERTED=""
+LAST_SEEN=""; OBS_TS=0; ALERT_TS=0; LAST_ALERTED=""; LAST_KIND=""
 if [ -r "$STATE" ]; then
-  read -r LAST_SEEN OBS_TS ALERT_TS LAST_ALERTED < "$STATE" 2>/dev/null || true
+  read -r LAST_SEEN OBS_TS ALERT_TS LAST_ALERTED LAST_KIND < "$STATE" 2>/dev/null || true
   LAST_SEEN="${LAST_SEEN:-}"; OBS_TS="${OBS_TS:-0}"
   if [ -z "$LAST_ALERTED" ]; then
     # Legacy 3-field state "<pct> <ts> <alerted_pct>": its single timestamp was
@@ -273,7 +273,19 @@ fi
 raise() {
   echo "$(ts) $1" >> "$LOG"
   [ -n "$ALERT_CMD" ] && $ALERT_CMD "$1" >> "$LOG" 2>&1
-  echo "$USED $NOW $NOW $USED" > "$STATE" 2>/dev/null || true
+  # 5th field records WHICH condition alarmed, so the recovery can name it. Readers
+  # must consume five fields or LAST_ALERTED silently absorbs the remainder.
+  echo "$USED $NOW $NOW $USED ${2:-disk}" > "$STATE" 2>/dev/null || true
+  return 0
+}
+
+# Deliver a message on the SAME channel as an alarm, without recording alert state.
+# raise() writes $STATE because an alarm is now active; a recovery must not, or it
+# would re-arm the very state it is clearing. Splitting them keeps that from depending
+# on statement order.
+announce() {
+  echo "$(ts) $1" >> "$LOG"
+  [ -n "$ALERT_CMD" ] && $ALERT_CMD "$1" >> "$LOG" 2>&1
   return 0
 }
 # Condition persists unchanged. Record what we SAW so the next run compares
@@ -294,11 +306,11 @@ if [ "$WRITE_OK" -ne 0 ]; then
   # 583G free "DISK CRITICAL" sent a real write outage to the wrong lane for an hour.
   case "$PROBE_CAUSE" in
     READ-ONLY*)
-      raise "ISMA STORE READ-ONLY: Weaviate refused the write and reported read-only. ${PROBE_CAUSE}. Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}. Ingestion is failing SILENTLY while reads keep working. THIS IS THE DISKGATE CONDITION." ;;
+      raise "ISMA STORE READ-ONLY: Weaviate refused the write and reported read-only. ${PROBE_CAUSE}. Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}. Ingestion is failing SILENTLY while reads keep working. THIS IS THE DISKGATE CONDITION." write ;;
     unreachable*)
-      raise "ISMA WRITE ENDPOINT UNREACHABLE: the write probe got NO HTTP RESPONSE, so the store's state is UNKNOWN — it may be healthy and simply unreachable. ${PROBE_CAUSE}. THIS IS NOT EVIDENCE OF A DISK PROBLEM: disk is ${USED}% used with ${AVAIL} free, reported as context only. Check the Weaviate service and the path to ${WEAVIATE_URL} before considering disk. Ingestion is failing SILENTLY while reads may still work." ;;
+      raise "ISMA WRITE ENDPOINT UNREACHABLE: the write probe got NO HTTP RESPONSE, so the store's state is UNKNOWN — it may be healthy and simply unreachable. ${PROBE_CAUSE}. THIS IS NOT EVIDENCE OF A DISK PROBLEM: disk is ${USED}% used with ${AVAIL} free, reported as context only. Check the Weaviate service and the path to ${WEAVIATE_URL} before considering disk. Ingestion is failing SILENTLY while reads may still work." write ;;
     *)
-      raise "ISMA WRITE REFUSED: the store answered and rejected the write, cause not established as disk. ${PROBE_CAUSE}. Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}, reported as context only. Ingestion is failing SILENTLY while reads keep working." ;;
+      raise "ISMA WRITE REFUSED: the store answered and rejected the write, cause not established as disk. ${PROBE_CAUSE}. Disk ${USED}% used, ${AVAIL} free on the filesystem backing ${DATA_PATH}, reported as context only. Ingestion is failing SILENTLY while reads keep working." write ;;
   esac
   exit 1
 fi
@@ -321,7 +333,20 @@ fi
 
 # Recovered below the threshold: clear state so the next crossing alerts again.
 if [ -n "$LAST_SEEN" ]; then
-  echo "$(ts) RECOVERED: ${USED}% used, below the ${THRESHOLD}% threshold (was ${LAST_SEEN}%)" >> "$LOG"
+  # The all-clear rides the SAME channel as the alarm. Until 2026-09-08 this was a bare
+  # echo to $LOG, so every UNREACHABLE was delivered and every recovery was delivered to
+  # nobody — an asymmetric detector that turns each transient into open-ended doubt. It
+  # cost a real seat a day of withheld trust in ISMA writes.
+  #
+  # It also names WHICH condition cleared. The write-probe branch exits before this block,
+  # so after a write alarm the next healthy run landed here and reported a DISK percentage
+  # — a true sentence about the wrong subject.
+  case "$LAST_KIND" in
+    write)
+      announce "RECOVERED: the ISMA write endpoint is answering again — a write probe succeeded. Disk ${USED}% used, ${AVAIL} free (context, not the subject)." ;;
+    *)
+      announce "RECOVERED: ${USED}% used, below the ${THRESHOLD}% threshold (was ${LAST_SEEN}%)." ;;
+  esac
   rm -f "$STATE" 2>/dev/null || true
 fi
 exit 0
