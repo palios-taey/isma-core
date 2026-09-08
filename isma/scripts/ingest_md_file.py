@@ -256,7 +256,7 @@ def supersede_prior_versions(source_file: str, new_doc_hash: str) -> int:
     # CRITICAL: re-check source_file EXACTLY in Python. The GraphQL filter cannot
     # be trusted for paths — source_file is tokenization=word, so `Equal` matches
     # on TOKENS, not on the string. Measured: Equal on
-    # "/home/mira/isma-core/PRODUCTION.md" also returns
+    # ".../PRODUCTION.md" also returns
     # ".../docs/ISMA_PRODUCTION_MAP.md" and a training-corpus
     # ".../audit_logs/p4_production_evidence.md" — three different documents.
     # Without this re-check, superseding one document silently marks tiles of

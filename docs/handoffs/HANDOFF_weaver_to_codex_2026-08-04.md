@@ -8,7 +8,7 @@ narrative version: `recaps/2026-08-04_weaver.md`.*
 
 ## 1. LIVE STATE
 
-**Repo.** Live tree `/home/mira/isma-core` on `main`. Clean except `AGENTS.md` and `CLAUDE.md`,
+**Repo.** The operator's live checkout on `main`. Clean except `AGENTS.md` and `CLAUDE.md`,
 which were **already dirty before this session began and are not mine — leave them alone.**
 
 Two worktrees exist **on purpose** because their PRs are unlanded. Remove each when its PR lands
@@ -59,7 +59,7 @@ production observation. A green produced by the change itself is not evidence.
 ## 3. NEUTRALITY REVIEW STATUS
 
 **Subject:** taeys-hands' CPT seq-length/packing consult packet,
-`/home/mira/embedding-server/consults/2026-08-04_cpt_seqlen_packing_pack.md`
+a 2026-08-04 CPT seq-len packing consult pack held in the operator-private embedding-server tree (unavailable private historical evidence)
 (conductor-authored, taeys-hands restructured for lint).
 
 **Verdict delivered: NOT A PASS.** Delivered once, 4813 B, verified present in taeys-hands' inbox.
@@ -110,7 +110,7 @@ taeys-hands is **no longer holding** `:2–:6` and has stood down. My review abo
 their inbox and applies unchanged **if and only if** conductor revives the consult.
 
 My own independent GO-DEEP sweep of the record surfaced a **prior CPT seq/packing/batch consult
-with responses** under `/home/mira/embedding-server/plans/restart9b_consult/` — including
+with responses** in the operator-private embedding-server tree (unavailable private historical evidence) — including
 `CPT_baseline_perf.md` and `cpt_consult_response_perplexity.md`. **[Caveat, load-bearing]** those
 are for the **9B** run, not the 27B, so they are related evidence and **not automatically the
 decision** Jesse means. Confirm the model size before treating any of it as the answer.
@@ -140,7 +140,7 @@ behaviour, *not* confirmed in code. To close it, read `retrieval.py`'s hmm path;
 it to `[Observed]` without the code.**
 
 **5.2 — `backup_isma_store.sh:32` silent default (real, unfixed).**
-`DEST="${ISMA_BACKUP_DIR:-/home/mira/backups}"`, with `deploy/systemd/isma-backup.service:8`
+a hardcoded operator-specific backup default in `isma/scripts/backup_isma_store.sh` (removed in `8e0227b`), with `deploy/systemd/isma-backup.service:8`
 matching. A downloaded install backs ISMA up to a directory that is not theirs **and never says
 so** — the fail-loud violation this repo's own doc names. Two further occurrences are comments
 only (`ingest_md_file.py:259`, `backup_isma_store.sh:23`). Flagged, deliberately kept out of #49.

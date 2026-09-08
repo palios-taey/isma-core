@@ -30,7 +30,7 @@ failure is silent: a downloaded Taey follows the pointer, finds nothing, and pro
 Not an error — a quiet capability loss.
 
 > **Worked example from this repo, 2026-07-30.** Taey's production prompt pointed at
-> `/home/mira/isma/reports/taey_system_prompt_INDEX_weaver_section.md` — inside a **stale private ISMA tree**
+> a Taey system-prompt index file inside a **stale private ISMA tree** (operator-local, never publicly reachable)
 > that ran zero production services, and the file was **untracked by any repo** (`?? reports/`, zero tracked
 > files). Taey's entire ISMA operating knowledge existed only on one machine's local disk. The fix was not to
 > scrub that tree; it was to move the docs into `docs/taey/` here and repoint. Resolve every such pointer to
@@ -62,7 +62,7 @@ plausible, and builds a parallel path against dead code.
 > production unit pointed here; nothing pointed there. That sibling was pure confusion surface.
 
 - Working trees stay **clean** — zero dirty files, or committed with intent.
-- **Archive before you delete, always.** Non-production material goes to `/home/mira/recovery/` (or your
+- **Archive before you delete, always.** Non-production material goes to an operator-controlled archive location (or your
   equivalent) and is cleared from the working area, so there is zero ambiguity about what is production.
   **Never destroy** — verify the archive succeeded *before* the delete, not after.
 - **`.gitignore` generated and runtime state.** Do not track junk.

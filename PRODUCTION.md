@@ -73,7 +73,7 @@ isma/src/query_classifier.py        isma/src/temporal_query.py
 | Store | Where | Contents |
 |---|---|---|
 | Weaviate | `:8088`, data at `/var/spark/weaviate-isma` | class **`ISMA_Quantum`**, ~1.6M tiles, **73 properties** |
-| Neo4j | `bolt://localhost:7689`, data at `/home/mira/neo4j-isma-data` | graph enrichment; core search runs without it |
+| Neo4j | `bolt://localhost:7689`, data in an operator-configured external data directory | graph enrichment; core search runs without it |
 | Redis | cache + HMM inverted index | optional |
 
 The full field list with types and semantics is `docs/taey/ISMA_SCHEMA_REFERENCE.md`, **generated

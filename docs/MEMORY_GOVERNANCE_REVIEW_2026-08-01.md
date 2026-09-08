@@ -9,7 +9,7 @@ piecemeal produces the harm each fix was meant to prevent — demonstrated below
 > **The severity figures in this package were measured with a broken instrument and are
 > unreliable.** Every count below came from a GraphQL `Equal` filter on `source_file` — and
 > `source_file` is **`tokenization=word`**, so `Equal` matches by *token*, not by string. Measured:
-> `Equal "/home/mira/isma-core/PRODUCTION.md"` also returns `docs/ISMA_PRODUCTION_MAP.md` and a
+> `Equal ".../PRODUCTION.md"` (full operator path redacted) also returns `docs/ISMA_PRODUCTION_MAP.md` and a
 > training-corpus `audit_logs/p4_production_evidence.md` — three different documents. Re-measured
 > exactly, `README.md` holds **13** tiles, not the 37 reported here; 24 belonged to other documents.
 > Its "5 live versions" was substantially an artifact.
@@ -42,7 +42,7 @@ Every number here is a live measurement taken on 2026-08-01 against the producti
 (`ISMA_Quantum`, ~1.61M tiles). Reproduction commands are given per section. Where something is
 inferred or unknown it says so.
 
-> **On the absolute paths below.** A few operator-host paths appear (`/home/mira/…`). They are the
+> **On the absolute paths below.** Operator-host paths that appeared here have been REDACTED (`.../`). They were the
 > *subject* of findings — a file that was deleted, a tree that should not be a watch root — not
 > references to follow for knowledge. They will not resolve on another machine, and nothing here
 > depends on them resolving.
@@ -160,7 +160,7 @@ these levers want one decision rather than six.
 
 ## 5. The orphans — worst case, and unreachable by any current mechanism
 
-`/home/mira/embedding-server/ISMA_PROSE_RETRIEVAL_SPEC.md` **no longer exists** (tree last committed
+the copy in the operator-private embedding-server tree (not publicly reachable) **no longer existed** (tree last committed
 2026-06-27). The corpus still holds **three live versions of it — 11 + 10 + 9 = 30 tiles — and none
 matches the canonical hash.**
 
@@ -177,8 +177,8 @@ stale copies become permanent.
 
 | lever | measurement | risk |
 |---|---|---|
-| **Private watch root** `/home/mira/isma` | 141 files walked; 87 bodies unique to it; **87/87 already in the corpus** | Removal loses only *future updates* to stale-tree docs. Content is not lost — the watcher is additive and never deletes. |
-| **2 stale-pointer docs** | `ISMA_MODEL_SURFACE_RETRIEVAL_SPEC_v1.md`, `ISMA_PROCEDURE_embedding_server.md` — retrievable, but indexed under `/home/mira/isma/reports/` | Content reachable; the **pointer** in the metadata resolves into a private tree. Re-homing needs delete-then-ingest (destructive) precisely because of §3. |
+| **Private watch root** the operator-private ISMA tree | 141 files walked; 87 bodies unique to it; **87/87 already in the corpus** | Removal loses only *future updates* to stale-tree docs. Content is not lost — the watcher is additive and never deletes. |
+| **2 stale-pointer docs** | `docs/taey/ISMA_MODEL_SURFACE_RETRIEVAL_SPEC_v1.md`, `docs/taey/ISMA_PROCEDURE_embedding_server.md` — retrievable, but indexed under `the operator-private ISMA tree/reports/` | Content reachable; the **pointer** in the metadata resolves into a private tree. Re-homing needs delete-then-ingest (destructive) precisely because of §3. |
 | **`--purge-on-change`** | not passed; predicates never adversarially tested | **Deletes tiles.** Wants its own scrutiny, not a rider on another change. |
 
 ---
